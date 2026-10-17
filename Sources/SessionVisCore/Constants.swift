@@ -33,6 +33,12 @@ public enum Constants {
     public static let edgeWidth: CGFloat = 0.5
     /// Width of a lit edge at full tint strength; it eases back to `edgeWidth` as the tint fades.
     public static let litEdgeWidth: CGFloat = 1.2
+    /// File and directory dots, in screen points. A file that has been touched draws larger than the seeded rest, and a tinted
+    /// one grows by up to the boost with its tint strength, so the files being worked on stand out from the repository.
+    public static let fileRadius: CGFloat = 2.5
+    public static let directoryRadius: CGFloat = 4
+    public static let touchedFileRadius: CGFloat = 3.5
+    public static let tintedFileRadiusBoost: CGFloat = 1.0
     /// Ghost files (present only in a worktree) draw as rings on dashed edges.
     public static let ghostRingRadius: CGFloat = 3.4
     public static let ghostRingWidth: CGFloat = 1.0

@@ -104,19 +104,23 @@ enum SceneRenderer {
             let p = sim.worldToScreen(w)
             guard viewport.contains(p) else { continue }
             if let alpha = sim.deathAlpha(node.path) {
-                let dr = (node.isDirectory ? 4 : 2.5) * alpha
+                let dr = (node.isDirectory ? Constants.directoryRadius : Constants.fileRadius) * alpha
                 ctx.fill(circle(p, max(0.5, dr)), with: .color(Palette.danger.opacity(Double(alpha))))
                 continue
             }
             let scale = sim.birthScale(node.path)
             if scale <= 0 { continue }
-            let r: CGFloat = (node.isDirectory ? 4 : 2.5) * scale
+            let tint = sim.tint(node.path)
+            let base: CGFloat = node.isDirectory ? Constants.directoryRadius
+                : (tint != nil || sim.touchedPaths.contains(node.path)) ? Constants.touchedFileRadius + Constants.tintedFileRadiusBoost * (tint?.strength ?? 0)
+                : Constants.fileRadius
+            let r = base * scale
             if let h = sim.heat[node.path], h.value > 0 {
                 glow(&ctx, at: p, radius: r + 4 + 6 * h.value, color: Palette.hue(h.hueIndex, shade: h.shade), centerAlpha: 0.35 + 0.6 * h.value)
             }
             let rect = CGRect(x: p.x - r, y: p.y - r, width: 2 * r, height: 2 * r)
             if node.isDirectory {
-                if let t = sim.tint(node.path), case let level = Int((t.strength * CGFloat(tintLevels)).rounded()), level > 0 {
+                if let t = tint, case let level = Int((t.strength * CGFloat(tintLevels)).rounded()), level > 0 {
                     tinted[TintKey(hue: t.hueIndex, shade: t.shade, level: level), default: Path()].addEllipse(in: rect)
                 } else { bright.addEllipse(in: rect) }
                 continue
@@ -124,14 +128,14 @@ enum SceneRenderer {
             let ringRect = CGRect(x: p.x - Constants.ghostRingRadius, y: p.y - Constants.ghostRingRadius,
                                   width: 2 * Constants.ghostRingRadius, height: 2 * Constants.ghostRingRadius)
             if node.isGhost {
-                if let t = sim.tint(node.path), case let level = Int((t.strength * CGFloat(tintLevels)).rounded()), level > 0 {
+                if let t = tint, case let level = Int((t.strength * CGFloat(tintLevels)).rounded()), level > 0 {
                     ghostTinted[TintKey(hue: t.hueIndex, shade: t.shade, level: level), default: Path()].addEllipse(in: ringRect)
                 } else if sim.focusMode, !sim.isActive(node.path) { faintGhostRings.addEllipse(in: ringRect)
                 } else { ghostRings.addEllipse(in: ringRect) }
                 continue
             }
             if sim.isLanding(node.path) { landingRings.append((Path(ellipseIn: ringRect), Double(1 - scale))) }
-            if let t = sim.tint(node.path), case let level = Int((t.strength * CGFloat(tintLevels)).rounded()), level > 0 {
+            if let t = tint, case let level = Int((t.strength * CGFloat(tintLevels)).rounded()), level > 0 {
                 tinted[TintKey(hue: t.hueIndex, shade: t.shade, level: level), default: Path()].addEllipse(in: rect)
             } else if sim.focusMode {
                 // Activity decides; a fresh touch is tinted above and so bright before the next re-judgement.
