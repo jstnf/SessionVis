@@ -62,4 +62,15 @@ public enum Constants {
     public static let touchDedupeWindow: TimeInterval = 3
     /// A disk change naming more paths than this is a bulk operation (checkout, worktree add, formatter) and is not credited.
     public static let diskAttributionPathLimit = 25
+
+    /// A git subprocess (listing files or worktrees) is terminated after this long.
+    public static let gitTimeout: TimeInterval = 3
+    /// Pause before listing worktrees after the registry directory changes, so git has finished writing the entry.
+    public static let registryRefreshDelay: TimeInterval = 0.3
+
+    /// After a timed-out git subprocess is asked to terminate, it is killed and its output abandoned following this grace.
+    public static let gitKillGrace: TimeInterval = 1
+
+    /// How often a git subprocess read checks whether it should be abandoned.
+    public static let gitReadPollInterval: TimeInterval = 0.1
 }

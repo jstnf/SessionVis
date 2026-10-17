@@ -1,21 +1,12 @@
 import Foundation
 
-/// Where a file exists: the main checkout, or a `.claude/worktrees/<name>` checkout folded onto the same tree.
+/// Where a file exists: the main checkout, or a registered worktree checkout folded onto the same tree.
 public enum Origin: Hashable, Sendable, Comparable {
     case main
     case worktree(String)
 
+    /// Claude Code's own worktree directory inside the root; its entries stand in for the registry when git cannot be asked.
     public static let worktreesComponent = ".claude/worktrees"
-
-    public static func worktreesDirectory(under root: String) -> String { root + "/" + worktreesComponent }
-
-    /// The absolute directory this origin's files are relative to.
-    public func rootPath(under root: String) -> String {
-        switch self {
-        case .main: root
-        case .worktree(let name): Self.worktreesDirectory(under: root) + "/" + name
-        }
-    }
 
     /// Main first, then worktrees by name.
     public static func < (lhs: Origin, rhs: Origin) -> Bool {

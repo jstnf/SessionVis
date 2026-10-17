@@ -11,7 +11,7 @@ final class TestClock: @unchecked Sendable {
 }
 
 @Suite struct SessionStoreTests {
-    let folder = PathFolder(root: "/repo")
+    let folder = PathFolder(root: "/repo", worktrees: [Worktree(name: "wt", path: "/repo/.claude/worktrees/wt")])
     let url = URL(fileURLWithPath: "/p/s1.jsonl")
     let t0 = Date(timeIntervalSince1970: 1_000_000)
 
@@ -452,11 +452,66 @@ final class TestClock: @unchecked Sendable {
     @Test func shellTouchesFoldWorktreePathsAndUseTheRecordCwd() async throws {
         let root = try tempRepo([".claude/worktrees/wt/Sources/W.swift"])
         defer { try? FileManager.default.removeItem(atPath: root) }
-        let store = SessionStore(folder: PathFolder(root: root), clock: TestClock().read)
+        let store = SessionStore(folder: PathFolder(root: root, worktrees: [Worktree(name: "wt", path: root + "/.claude/worktrees/wt")]), clock: TestClock().read)
         await store.apply(.sessionAppeared(sessionId: "s1", transcriptURL: url))
         await store.apply(line(.toolUse(id: "b1", name: "Bash", filePath: nil, description: nil, question: nil, command: "cat Sources/W.swift"), cwd: root + "/.claude/worktrees/wt"))
         let ts = await store.snapshot().recentTouches
         #expect(ts.count == 1 && ts[0].path == RepoPath(string: "Sources/W.swift") && ts[0].worktree == "wt")
+    }
+
+    /// `<base>/repo` and `<base>/feature` (a sibling checkout) with the given files under each; returns the base to delete.
+    func siblingRepo(repo: [String], feature: [String]) throws -> (base: String, root: String, sibling: String) {
+        let base = try tempRepo(repo.map { "repo/" + $0 } + feature.map { "feature/" + $0 } + ["repo/", "feature/"])
+        return (base, base + "/repo", base + "/feature")
+    }
+
+    @Test func toolTouchAtSiblingWorktreePathRecordsTheWorktreeName() async throws {
+        let (base, root, sib) = try siblingRepo(repo: ["Sources/A.swift"], feature: ["Sources/A.swift"])
+        defer { try? FileManager.default.removeItem(atPath: base) }
+        let store = SessionStore(folder: PathFolder(root: root, worktrees: [Worktree(name: "feature", path: sib)]), clock: TestClock().read)
+        await store.apply(.sessionAppeared(sessionId: "s1", transcriptURL: url))
+        await store.apply(edit(sib + "/Sources/A.swift", cwd: sib))
+        let snap = await store.snapshot()
+        #expect(snap.recentTouches.map(\.path) == [RepoPath(string: "Sources/A.swift")])
+        #expect(snap.recentTouches.first?.worktree == "feature")
+        #expect(snap.agents[0].worktree == "feature")
+    }
+
+    @Test func touchBeforeRegistrationIsDroppedAndRecordedAfterSetFolder() async throws {
+        let (base, root, sib) = try siblingRepo(repo: [], feature: ["Sources/A.swift"])
+        defer { try? FileManager.default.removeItem(atPath: base) }
+        let store = SessionStore(folder: PathFolder(root: root), clock: TestClock().read)
+        await store.apply(.sessionAppeared(sessionId: "s1", transcriptURL: url))
+        await store.apply(edit(sib + "/Sources/A.swift", id: "e1", at: 1, cwd: sib))
+        #expect(await store.snapshot().recentTouches.isEmpty)                     // a miss, never an invented node
+        await store.setFolder(PathFolder(root: root, worktrees: [Worktree(name: "feature", path: sib)]))
+        await store.apply(edit(sib + "/Sources/A.swift", id: "e2", at: 2, cwd: sib))
+        let ts = await store.snapshot().recentTouches
+        #expect(ts.count == 1 && ts[0].worktree == "feature" && ts[0].path == RepoPath(string: "Sources/A.swift"))
+    }
+
+    @Test func setFolderRelabelsExistingRecordsFromTheirCwd() async {
+        let store = SessionStore(folder: PathFolder(root: "/repo"), clock: TestClock().read)
+        await store.apply(.sessionAppeared(sessionId: "s1", transcriptURL: url))
+        await store.apply(line(.userPrompt(text: "hi"), cwd: "/repo-feature"))
+        await store.apply(.sessionAppeared(sessionId: "s2", transcriptURL: URL(fileURLWithPath: "/p/s2.jsonl")))
+        await store.apply(.line(sessionId: "s2", agentId: nil, TranscriptLine(timestamp: t0, cwd: "/repo", gitBranch: nil, agentId: nil, event: .userPrompt(text: "main"))))
+        var snap = await store.snapshot()
+        #expect(snap.agents.map(\.worktree) == [nil, nil])
+        await store.setFolder(PathFolder(root: "/repo", worktrees: [Worktree(name: "repo-feature", path: "/repo-feature")]))
+        snap = await store.snapshot()
+        #expect(snap.agents.first { $0.id == AgentID("s1") }?.worktree == "repo-feature")
+        #expect(snap.agents.first { $0.id == AgentID("s2") }?.worktree == nil)
+    }
+
+    @Test func shellReadsCheckExistenceUnderTheRegisteredRoot() async throws {
+        let (base, root, sib) = try siblingRepo(repo: [], feature: ["Sources/W.swift"])
+        defer { try? FileManager.default.removeItem(atPath: base) }
+        let store = SessionStore(folder: PathFolder(root: root, worktrees: [Worktree(name: "feature", path: sib)]), clock: TestClock().read)
+        await store.apply(.sessionAppeared(sessionId: "s1", transcriptURL: url))
+        await store.apply(bash("cat Sources/W.swift Sources/Missing.swift", cwd: sib))
+        let ts = await store.snapshot().recentTouches
+        #expect(ts.map(\.path.string) == ["Sources/W.swift"] && ts[0].worktree == "feature" && ts[0].kind == .read)
     }
 
     @Test func toolTouchesCarrySourceAndSearchesTouchDirectories() async throws {

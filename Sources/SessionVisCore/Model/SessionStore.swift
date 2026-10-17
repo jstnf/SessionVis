@@ -31,7 +31,7 @@ public actor SessionStore {
         }
     }
 
-    private let folder: PathFolder
+    private(set) var folder: PathFolder
     private let clock: @Sendable () -> Date
     private var agents: [AgentID: AgentRecord] = [:]
     private var toolUseOwner: [String: AgentID] = [:]        // tool_use id → agent that issued it
@@ -60,6 +60,17 @@ public actor SessionStore {
     public init(folder: PathFolder, clock: @escaping @Sendable () -> Date = { Date() }) {
         self.folder = folder
         self.clock = clock
+    }
+
+    /// Swaps the registry. Records whose cwd is inside a now-registered checkout get its name, so a session tracked
+    /// before its worktree was registered is labelled; a record's existing label is never cleared here.
+    public func setFolder(_ folder: PathFolder) {
+        self.folder = folder
+        for (id, var rec) in agents {
+            guard let cwd = rec.cwd, let name = folder.worktreeName(ofCwd: cwd) else { continue }
+            rec.worktree = name
+            agents[id] = rec
+        }
     }
 
     // MARK: - Apply
@@ -420,7 +431,7 @@ public actor SessionStore {
     /// A file-scope touch needs a file; a directory-scope one accepts a directory or a file (a search of one file).
     private func existsOnDisk(_ folded: FoldedPath, scope: TouchScope) -> Bool {
         let origin: Origin = folded.worktree.map { .worktree($0) } ?? .main
-        let root = origin.rootPath(under: folder.root)
+        let root = folder.rootPath(of: origin)
         let full = folded.path.isRoot ? root : root + "/" + folded.path.string
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: full, isDirectory: &isDirectory) else { return false }

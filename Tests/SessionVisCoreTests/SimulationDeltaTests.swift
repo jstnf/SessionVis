@@ -130,7 +130,7 @@ import Testing
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         try "x".write(to: dir.appendingPathComponent("ignored.log"), atomically: true, encoding: .utf8)
         var sim = Simulation(tree: F.tree())
-        sim.rootPath = dir.path
+        sim.folder = PathFolder(root: dir.path)
         sim.apply(snapshot: StoreSnapshot(agents: [F.agent("s1")]), now: F.t0)
         sim.apply(snapshot: StoreSnapshot(agents: [F.agent("s1")], recentTouches: [
             F.touch(1, "s1", "Ghost/x.swift"), F.touch(2, "s1", "ignored.log")]), now: F.t0)
@@ -205,7 +205,7 @@ import Testing
 
     @Test func mainDeltaDoesNotKillWorktreeFilesAndWorktreeDeltaDoesNotKillMainFiles() {
         var sim = Simulation(tree: ghostTree())
-        sim.rootPath = "/nonexistent-\(UUID().uuidString)"
+        sim.folder = PathFolder(root: "/nonexistent-\(UUID().uuidString)")
         sim.apply(delta: TreeDelta(added: [], origin: .main, snapshot: [a, b, c]), now: F.t0)
         #expect(sim.deathAlpha(g) == nil && sim.tree.isGhost(g))
         sim.apply(delta: TreeDelta(added: [], origin: .worktree("wt"), snapshot: [g]), now: F.t0)
@@ -250,7 +250,7 @@ import Testing
 
     @Test func worktreeTouchInsertsGhostAndSurvivesMainSnapshot() {
         var sim = Simulation(tree: F.tree())
-        sim.rootPath = "/nonexistent-\(UUID().uuidString)"
+        sim.folder = PathFolder(root: "/nonexistent-\(UUID().uuidString)")
         sim.apply(snapshot: StoreSnapshot(agents: [F.agent("s1")]), now: F.t0)
         let p = RepoPath(string: "A/fresh.swift")
         sim.apply(snapshot: StoreSnapshot(agents: [F.agent("s1")], recentTouches: [
@@ -264,6 +264,23 @@ import Testing
         sim.apply(snapshot: StoreSnapshot(agents: [F.agent("s1")], recentTouches: [
             Touch(seq: 2, agent: AgentID("s1"), path: a, worktree: "wt", kind: .read, scope: .file, source: .tool("Edit"), at: F.t0)]), now: F.t0)
         #expect(!sim.tree.isGhost(a) && sim.tree.fileCount == 4)
+    }
+    @Test func snapshotExistenceCheckLooksUnderTheRegisteredRoot() throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("recon-wt-\(UUID().uuidString)")
+        let wt = base.appendingPathComponent("feature")
+        try FileManager.default.createDirectory(at: wt.appendingPathComponent("A"), withIntermediateDirectories: true)
+        try "x".write(to: wt.appendingPathComponent("A/kept.swift"), atomically: true, encoding: .utf8)
+        var sim = Simulation(tree: F.tree())
+        sim.folder = PathFolder(root: base.appendingPathComponent("repo").path, worktrees: [Worktree(name: "feature", path: wt.path)])
+        sim.apply(snapshot: StoreSnapshot(agents: [F.agent("s1")]), now: F.t0)
+        let kept = RepoPath(string: "A/kept.swift"), gone = RepoPath(string: "A/gone.swift")
+        sim.apply(snapshot: StoreSnapshot(agents: [F.agent("s1")], recentTouches: [
+            Touch(seq: 1, agent: AgentID("s1"), path: kept, worktree: "feature", kind: .write, scope: .file, source: .tool("Edit"), at: F.t0),
+            Touch(seq: 2, agent: AgentID("s1"), path: gone, worktree: "feature", kind: .write, scope: .file, source: .tool("Edit"), at: F.t0)]), now: F.t0)
+        #expect(sim.tree.isGhost(kept) && sim.tree.isGhost(gone))
+        sim.apply(delta: TreeDelta(origin: .worktree("feature"), snapshot: []), now: F.t0)
+        #expect(sim.deathAlpha(kept) == nil)     // on disk under the sibling checkout, which the folder knows
+        #expect(sim.deathAlpha(gone) == 1)       // nowhere on disk
     }
     @Test func worktreeDeltaNeverDisplacesMainOnAFileDirectoryClash() {
         let shared = RepoPath(string: "Sources/Shared"), inner = RepoPath(string: "Sources/Shared/inner.swift")

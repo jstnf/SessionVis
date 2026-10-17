@@ -148,6 +148,14 @@ import Testing
         #expect(snap.hookEventsSeenAt == at(5))
     }
 
+    @Test func hookWithASiblingWorktreeCwdIsAccepted() async {
+        let f = PathFolder(root: "/repo", worktrees: [Worktree(name: "repo-feature", path: "/repo-feature")])
+        let s = SessionStore(folder: f, clock: { [t0] in t0 })
+        await s.apply(hook("SessionStart", at: 1, cwd: "/repo-feature/sub", sid: "w1"))
+        await s.apply(hook("SessionStart", at: 1, cwd: "/repo-featureX", sid: "x1"))   // not a checkout: ignored
+        #expect(await s.snapshot().agents.map(\.id) == [AgentID("w1")])
+    }
+
     @Test func permissionNotificationWaitsThenTranscriptResumes() async {
         let s = await makeStore()
         await s.apply(hook("Notification", at: 5, message: "Claude needs your permission to use Bash", type: "permission_prompt"))

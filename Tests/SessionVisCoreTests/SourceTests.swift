@@ -120,6 +120,31 @@ enum SourceFixtures {
         await source.stop()
     }
 
+    @Test(.timeLimit(.minutes(1))) func sessionInASiblingWorktreeIsTrackedOnceTheRegistryKnowsIt() async throws {
+        let (root, _) = try SourceFixtures.makeProjects()
+        let proj = root.appendingPathComponent("-repo-feature")
+        try FileManager.default.createDirectory(at: proj, withIntermediateDirectories: true)
+        let s4 = proj.appendingPathComponent("s4.jsonl")
+        try (SourceFixtures.userLine("in a sibling checkout", cwd: "/repo-feature") + "\n").write(to: s4, atomically: true, encoding: .utf8)
+        let source = LiveSource(folder: PathFolder(root: "/repo"), projectsRoot: root, spoolDirectory: nil)
+        let reader = EventReader(source.events)
+        await source.rescan(); await source.tick()
+        let initial = await reader.collect(6)
+        #expect(!initial.contains { if case .sessionAppeared(let sid, _) = $0 { return sid == "s4" } else { return false } })
+        await source.rescan(); await source.tick()                                  // still rejected: membership is remembered
+        #expect(await reader.next() == .diagnostics(skippedLines: 0))
+        await source.setFolder(PathFolder(root: "/repo", worktrees: [Worktree(name: "repo-feature", path: "/repo-feature")]))
+        await source.tick()
+        var later: [SourceEvent] = []
+        while later.count < 10, let e = await reader.next() {
+            later.append(e)
+            if case .sessionAppeared(let sid, _) = e, sid == "s4" { break }
+        }
+        #expect(later.contains { $0 == .sessionAppeared(sessionId: "s4", transcriptURL: s4) })
+        #expect(await source.fileWatcherCount == 2)                                   // s1 and s4
+        await source.stop()
+    }
+
     @Test(.timeLimit(.minutes(1))) func oldSubagentIsNotAnnouncedAndOnlyMainsAreFileWatched() async throws {
         let (root, _) = try SourceFixtures.makeProjects()
         let subs = root.appendingPathComponent("-repo/s1/subagents")

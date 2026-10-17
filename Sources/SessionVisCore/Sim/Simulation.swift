@@ -137,8 +137,8 @@ public struct Simulation: Sendable {
     public func isLanding(_ path: RepoPath) -> Bool { landing.contains(path) }
     public private(set) var touchedPaths: Set<RepoPath> = []
     public private(set) var treeVersion = 0
-    /// Absolute directory the tree is rooted at; enables the existence check when reconciling a watcher snapshot.
-    public var rootPath: String?
+    /// Where each origin's files live on disk; enables the existence check when reconciling a watcher snapshot.
+    public var folder: PathFolder?
     /// Files shown in the tree, not counting ones already fading out.
     public var visibleFileCount: Int { tree.fileCount - dying.count }
     private var primed = false
@@ -462,9 +462,9 @@ public struct Simulation: Sendable {
         }
         for p in delta.added { add(p, origin: o) }
         for p in delta.removed { drop(p, from: o) }
-        if let snap = delta.snapshot, let root = rootPath {
+        if let snap = delta.snapshot, let folder {
             // Files this checkout no longer lists: keep the ones that really exist (e.g. gitignored files an agent wrote).
-            let originRoot = o.rootPath(under: root)
+            let originRoot = folder.rootPath(of: o)
             for p in tree.files(in: o) where !snap.contains(p) && dying[p] == nil {
                 if FileManager.default.fileExists(atPath: originRoot + "/" + p.string) { continue }
                 drop(p, from: o)

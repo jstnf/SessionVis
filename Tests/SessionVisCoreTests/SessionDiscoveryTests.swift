@@ -50,7 +50,7 @@ import Testing
 
     @Test func membershipUsesFirstCwd() throws {
         let root = try makeRoot()
-        let folder = PathFolder(root: "/Users/me/repo")
+        let folder = PathFolder(root: "/Users/me/repo", worktrees: [Worktree(name: "wt", path: "/Users/me/repo/.claude/worktrees/wt")])
         let byId = Dictionary(uniqueKeysWithValues: SessionDiscovery.listTranscripts(projectsRoot: root).map { ($0.sessionId, $0.transcriptURL) })
         #expect(SessionDiscovery.isMember(transcriptURL: byId["s1"]!, folder: folder))
         #expect(!SessionDiscovery.isMember(transcriptURL: byId["s2"]!, folder: folder))
@@ -85,17 +85,5 @@ import Testing
         #expect(subs.first?.agentId == "abc")
         #expect(subs.first?.meta == SubagentMeta(description: "Implement Task 2", agentType: "general-purpose", model: "sonnet", toolUseId: "toolu_1", spawnDepth: 1))
         #expect(SessionDiscovery.listSubagents(sessionTranscriptURL: root.appendingPathComponent("-Users-me-repo/s2.jsonl")).isEmpty)
-    }
-
-    @Test func pathFolderMembershipHelpers() {
-        let f = PathFolder(root: "/Users/me/repo")
-        #expect(f.isMemberCwd("/Users/me/repo"))
-        #expect(f.isMemberCwd("/Users/me/repo/"))
-        #expect(f.isMemberCwd("/Users/me/repo/.claude/worktrees/wt"))
-        #expect(f.isMemberCwd("/Users/me/repo/.claude/worktrees/wt/sub"))
-        #expect(!f.isMemberCwd("/Users/me/repo/Sources"))
-        #expect(!f.isMemberCwd("/Users/me/other"))
-        #expect(f.worktreeName(ofCwd: "/Users/me/repo/.claude/worktrees/wt/sub") == "wt")
-        #expect(f.worktreeName(ofCwd: "/Users/me/repo") == nil)
     }
 }

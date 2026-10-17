@@ -7,7 +7,7 @@ public final class FileWatcher: @unchecked Sendable {
     public init?(path: String, directory: Bool, handler: @escaping @Sendable () -> Void) {
         let fd = open(path, O_EVTONLY)
         guard fd >= 0 else { return nil }
-        let mask: DispatchSource.FileSystemEvent = directory ? [.write] : [.write, .extend, .delete, .rename]
+        let mask: DispatchSource.FileSystemEvent = directory ? [.write, .delete, .rename] : [.write, .extend, .delete, .rename]
         let src = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd, eventMask: mask, queue: .global(qos: .utility))
         src.setEventHandler(handler: handler)
         src.setCancelHandler { close(fd) }

@@ -15,6 +15,8 @@ final class AppModel {
     var hoverPoint: CGPoint?
     var isReplay = false
     var hookInstalled = false
+    /// The registered worktrees, for Settings.
+    var worktrees: [Worktree] = []
     /// True from source start until it reports `.initialLoadComplete`; the scene is not fed meanwhile.
     var isLoading = false
     let projectsRoot = SessionDiscovery.projectsRoot()
@@ -28,6 +30,10 @@ final class AppModel {
     @ObservationIgnored private var openGeneration = 0
     @ObservationIgnored private var watcher: RepoWatcher?
     @ObservationIgnored private var watcherTask: Task<Void, Never>?
+    @ObservationIgnored private var folder: PathFolder?
+    @ObservationIgnored private var registryWatcher: FileWatcher?
+    @ObservationIgnored private var refreshing = false
+    @ObservationIgnored private var refreshRequested = false
     static let lastDirectoryKey = "lastDirectory"
 
     var mains: [AgentSnapshot] { snapshot.agents.filter { !$0.isSubagent } }
@@ -102,12 +108,15 @@ final class AppModel {
             errorMessage = "Claude Code's projects folder was not found at \(projectsRoot.path)."
             return
         }
-        let tree = await loadTree(dir)
+        let folder = await Task.detached(priority: .userInitiated) { RegistryRefresh.folder(root: dir) }.value
         guard generation == openGeneration else { return }
-        applyTree(tree, root: dir)
-        let folder = PathFolder(root: dir)
+        let tree = await loadTree(folder)
+        guard generation == openGeneration else { return }
+        self.folder = folder
+        worktrees = folder.worktrees
+        applyTree(tree, folder: folder)
         let store = SessionStore(folder: folder)
-        let watcher = RepoWatcher(directory: dir, initial: tree)
+        let watcher = RepoWatcher(folder: folder, initial: tree)
         self.watcher = watcher
         watcher.start()
         watcherTask = Task { [weak self] in
@@ -128,6 +137,7 @@ final class AppModel {
         await live.start()
         guard generation == openGeneration else { return }
         startPolling(store)
+        await armRegistryWatcher(root: dir, generation: generation)
     }
 
     func startReplay(transcript: URL, speed: Double, directory raw: String) async {
@@ -138,10 +148,14 @@ final class AppModel {
         directory = dir
         isReplay = true
         errorMessage = nil
-        let tree = await loadTree(dir)
+        let folder = await Task.detached(priority: .userInitiated) { RegistryRefresh.folder(root: dir) }.value
         guard generation == openGeneration else { return }
-        applyTree(tree, root: dir)
-        let store = SessionStore(folder: PathFolder(root: dir))
+        let tree = await loadTree(folder)
+        guard generation == openGeneration else { return }
+        self.folder = folder
+        worktrees = folder.worktrees
+        applyTree(tree, folder: folder)
+        let store = SessionStore(folder: folder)
         self.store = store
         let source = ReplaySource(transcriptURL: transcript, speed: speed)
         startPump(source.events(), store: store, generation: generation)
@@ -159,14 +173,14 @@ final class AppModel {
         }
     }
 
-    private func loadTree(_ dir: String) async -> FileTree {
-        await Task.detached(priority: .userInitiated) { FileTreeScanner.scan(directory: dir) }.value
+    private func loadTree(_ folder: PathFolder) async -> FileTree {
+        await Task.detached(priority: .userInitiated) { FileTreeScanner.scan(folder: folder) }.value
     }
 
-    private func applyTree(_ tree: FileTree, root: String) {
+    private func applyTree(_ tree: FileTree, folder: PathFolder) {
         treeFileCount = tree.fileCount
         treeTruncated = tree.truncated
-        box.reset(tree: tree, rootPath: root)
+        box.reset(tree: tree, folder: folder)
     }
 
     private func startPolling(_ store: SessionStore) {
@@ -187,11 +201,75 @@ final class AppModel {
         }
     }
 
+    // MARK: - Worktree registry
+
+    /// Watches `<git common dir>/worktrees`, which git writes on `worktree add`, `remove` and `prune`. Until that
+    /// directory exists (no worktree was ever added) the watcher sits on its parent, the common dir, and moves over
+    /// the first time the directory appears.
+    private func armRegistryWatcher(root: String, generation: Int) async {
+        let registry = await Task.detached(priority: .utility) { WorktreeLister.registryDirectory(root: root) }.value
+        guard generation == openGeneration, let registry else { return }
+        watchRegistry(registry, generation: generation)
+        await refreshWorktrees()
+    }
+
+    /// The directory to watch for `registry` right now: the registry itself once it exists, else its parent.
+    private func registryWatchPath(_ registry: String) -> String {
+        var isDirectory: ObjCBool = false
+        let exists = FileManager.default.fileExists(atPath: registry, isDirectory: &isDirectory) && isDirectory.boolValue
+        return exists ? registry : (registry as NSString).deletingLastPathComponent
+    }
+
+    /// Git removes the emptied directory with the last worktree and may recreate it at once, so every event opens a
+    /// fresh watcher on whichever node is right now; a watcher left on an unlinked inode would never fire again.
+    private func watchRegistry(_ registry: String, generation: Int) {
+        registryWatcher?.cancel()
+        registryWatcher = FileWatcher(path: registryWatchPath(registry), directory: true) { [weak self] in
+            Task { @MainActor in
+                guard let self, self.openGeneration == generation else { return }
+                self.watchRegistry(registry, generation: generation)
+                await self.refreshWorktrees()
+            }
+        }
+    }
+
+    /// Lists the worktrees again and, when the registry changed, hands the new folder to the store, the live source,
+    /// the watcher (whose rescan emits the deltas) and the simulation, in that order. Calls that arrive while a
+    /// listing is in flight coalesce into one more pass, so the newest listing always wins.
+    func refreshWorktrees() async {
+        if refreshing { refreshRequested = true; return }
+        refreshing = true
+        defer { refreshing = false }
+        repeat {
+            refreshRequested = false
+            let generation = openGeneration
+            guard !isReplay, let root = folder?.root else { return }
+            // Git creates the entry's directory before it fills it in; give it a moment.
+            try? await Task.sleep(for: .seconds(Constants.registryRefreshDelay))
+            let listed = await Task.detached(priority: .utility) { WorktreeLister.list(root: root) }.value
+            guard generation == openGeneration, let current = folder, let next = RegistryRefresh.next(current: current, listed: listed) else { continue }
+            if let store { await store.setFolder(next) }
+            guard generation == openGeneration else { continue }
+            if let live { await live.setFolder(next) }
+            guard generation == openGeneration else { continue }
+            folder = next
+            worktrees = next.worktrees
+            watcher?.setFolder(next)
+            box.setFolder(next)
+        } while refreshRequested
+    }
+
     func stop() {
+        openGeneration += 1
         pumpTask?.cancel(); pumpTask = nil
         pollTask?.cancel(); pollTask = nil
         watcherTask?.cancel(); watcherTask = nil
         watcher?.stop(); watcher = nil
+        registryWatcher?.cancel(); registryWatcher = nil
+        refreshing = false
+        refreshRequested = false
+        folder = nil
+        worktrees = []
         if let live { Task { await live.stop() } }
         if live != nil { HookSnippet.removeMarker() }
         live = nil

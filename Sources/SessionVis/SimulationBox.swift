@@ -7,12 +7,14 @@ final class SimulationBox {
     private(set) var simulation = Simulation(tree: FileTree(files: []))
     private var lastFrame: Date?
 
-    func reset(tree: FileTree, rootPath: String?) {
+    func reset(tree: FileTree, folder: PathFolder?) {
         simulation = Simulation(tree: tree, viewSize: simulation.viewSize)
-        simulation.rootPath = rootPath
+        simulation.folder = folder
         lastFrame = nil
         SceneRenderer.resetCaches()
     }
+
+    func setFolder(_ folder: PathFolder) { simulation.folder = folder }
 
     /// Advances to `date`, clamping long gaps (tab switch, sleep) to 50 ms.
     func step(to date: Date) {

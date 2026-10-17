@@ -11,6 +11,17 @@ struct SettingsSheet: View {
             Section("Directory") {
                 LabeledContent("Watching", value: model.directory ?? "—")
                 LabeledContent("Claude projects", value: model.projectsRoot.path)
+                LabeledContent("Worktrees") {
+                    if model.worktrees.isEmpty {
+                        Text("none")
+                    } else {
+                        VStack(alignment: .trailing, spacing: 2) {
+                            ForEach(model.worktrees, id: \.path) { wt in
+                                Text("\(wt.name) · \(wt.path)").textSelection(.enabled)
+                            }
+                        }
+                    }
+                }
             }
             Section("Hook (optional)") {
                 Text("Add this entry to the `hooks` array of each of these events in ~/.claude/settings.json: \(HookSnippet.events.joined(separator: ", ")). It reports permission prompts and session lifecycle exactly; the app works without it.")

@@ -4,7 +4,7 @@ import Foundation
 public actor LiveSource {
     public nonisolated let events: AsyncStream<SourceEvent>
     private let continuation: AsyncStream<SourceEvent>.Continuation
-    private let folder: PathFolder
+    private var folder: PathFolder
     private let projectsRoot: URL
     private let spool: HookSpoolReader?
     private let clock: @Sendable () -> Date
@@ -38,6 +38,13 @@ public actor LiveSource {
         self.projectsRoot = projectsRoot
         self.spool = spoolDirectory.map { HookSpoolReader(directory: $0) }
         self.clock = clock
+    }
+
+    /// Swaps the registry: transcripts rejected under the old one are judged again at once, tracked ones stay tracked.
+    public func setFolder(_ folder: PathFolder) {
+        self.folder = folder
+        membership = membership.filter { $0.value }
+        rescan()
     }
 
     public func start() async {
