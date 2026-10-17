@@ -23,6 +23,7 @@ struct SettingsSheet: View {
                     }
                 }
             }
+            HiddenFilesSection(model: model)
             Section("Hook (optional)") {
                 Text("Add this entry to the `hooks` array of each of these events in ~/.claude/settings.json: \(HookSnippet.events.joined(separator: ", ")). It reports permission prompts and session lifecycle exactly; the app works without it.")
                     .font(.callout).foregroundStyle(.secondary)
@@ -47,12 +48,12 @@ struct SettingsSheet: View {
             }
             Section("Diagnostics") {
                 LabeledContent("Sessions tracked", value: "\(model.mains.count) (+\(model.subagentCount) subagents)")
-                LabeledContent("Tree files", value: "\(model.treeFileCount)\(model.treeTruncated ? " (truncated)" : "")")
+                LabeledContent("Tree files", value: "\(model.treeFileCount)\(model.hiddenFileCount > 0 ? " (\(model.hiddenFileCount) hidden)" : "")\(model.treeTruncated ? " (truncated)" : "")")
                 LabeledContent("Skipped transcript lines", value: "\(model.snapshot.skippedLines)")
             }
         }
         .formStyle(.grouped)
-        .frame(width: 560, height: 480)
+        .frame(width: 560, height: 620)
     }
 
     @ViewBuilder

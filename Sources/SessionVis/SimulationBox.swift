@@ -7,8 +7,8 @@ final class SimulationBox {
     private(set) var simulation = Simulation(tree: FileTree(files: []))
     private var lastFrame: Date?
 
-    func reset(tree: FileTree, folder: PathFolder?) {
-        simulation = Simulation(tree: tree, viewSize: simulation.viewSize)
+    func reset(tree: FileTree, folder: PathFolder?, filter: FileFilter) {
+        simulation = Simulation(tree: tree, filter: filter, viewSize: simulation.viewSize)
         simulation.folder = folder
         lastFrame = nil
         SceneRenderer.resetCaches()
@@ -30,4 +30,8 @@ final class SimulationBox {
     func zoom(by factor: CGFloat, around point: CGPoint) { simulation.zoom(by: factor, around: point) }
     func resetCamera() { simulation.resetCamera() }
     func setFollow(_ id: AgentID?) { simulation.setFollow(id) }
+    func setFilter(_ filter: FileFilter) {
+        simulation.setFilter(filter)
+        SceneRenderer.resetCaches()
+    }
 }

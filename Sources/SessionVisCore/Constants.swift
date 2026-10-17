@@ -73,4 +73,7 @@ public enum Constants {
 
     /// How often a git subprocess read checks whether it should be abandoned.
     public static let gitReadPollInterval: TimeInterval = 0.1
+
+    /// How many suffix patterns Settings offers as one-click hidden-file rules.
+    public static let filterSuggestionLimit = 12
 }

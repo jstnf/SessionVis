@@ -17,6 +17,10 @@ final class AppModel {
     var hookInstalled = false
     /// The registered worktrees, for Settings.
     var worktrees: [Worktree] = []
+    /// Hidden-file rules for the watched directory, and what they currently hide.
+    var filter = FileFilter()
+    var hiddenFileCount = 0
+    var suggestions: [Suggestion] = []
     /// True from source start until it reports `.initialLoadComplete`; the scene is not fed meanwhile.
     var isLoading = false
     let projectsRoot = SessionDiscovery.projectsRoot()
@@ -34,6 +38,7 @@ final class AppModel {
     @ObservationIgnored private var registryWatcher: FileWatcher?
     @ObservationIgnored private var refreshing = false
     @ObservationIgnored private var refreshRequested = false
+    @ObservationIgnored private let filterStore = FileFilterStore()
     static let lastDirectoryKey = "lastDirectory"
 
     var mains: [AgentSnapshot] { snapshot.agents.filter { !$0.isSubagent } }
@@ -101,6 +106,7 @@ final class AppModel {
         openGeneration += 1
         let generation = openGeneration
         directory = dir
+        filter = filterStore.filter(for: dir)
         isReplay = false
         errorMessage = nil
         UserDefaults.standard.set(dir, forKey: Self.lastDirectoryKey)
@@ -148,6 +154,7 @@ final class AppModel {
         directory = dir
         isReplay = true
         errorMessage = nil
+        filter = filterStore.filter(for: dir)
         let folder = await Task.detached(priority: .userInitiated) { RegistryRefresh.folder(root: dir) }.value
         guard generation == openGeneration else { return }
         let tree = await loadTree(folder)
@@ -178,9 +185,10 @@ final class AppModel {
     }
 
     private func applyTree(_ tree: FileTree, folder: PathFolder) {
-        treeFileCount = tree.fileCount
         treeTruncated = tree.truncated
-        box.reset(tree: tree, folder: folder)
+        box.reset(tree: tree, folder: folder, filter: filter)
+        treeFileCount = box.simulation.visibleFileCount
+        hiddenFileCount = box.simulation.hiddenFileCount
     }
 
     private func startPolling(_ store: SessionStore) {
@@ -192,6 +200,8 @@ final class AppModel {
                 if snap != self.snapshot { self.snapshot = snap }
                 let visible = self.box.simulation.visibleFileCount
                 if visible != self.treeFileCount { self.treeFileCount = visible }
+                let hiddenCount = self.box.simulation.hiddenFileCount
+                if hiddenCount != self.hiddenFileCount { self.hiddenFileCount = hiddenCount }
                 if let sel = self.selectedAgent, !snap.agents.contains(where: { $0.id == sel }) { self.selectedAgent = nil }
                 // While loading, the list may update but the scene waits, so history lands as one priming pass.
                 if !self.isLoading { self.box.apply(snap, now: Date()) }
@@ -278,6 +288,44 @@ final class AppModel {
         snapshot = .empty
         selectedAgent = nil
         hover = nil
+    }
+
+    // MARK: - Hidden files
+
+    func setFilter(_ newFilter: FileFilter) {
+        filter = newFilter
+        if let dir = directory { filterStore.save(newFilter, for: dir) }
+        box.setFilter(newFilter)
+        treeFileCount = box.simulation.visibleFileCount
+        hiddenFileCount = box.simulation.hiddenFileCount
+        refreshSuggestions()
+    }
+
+    /// nil when the rule was added, else why it was not.
+    func addRule(_ text: String) -> FileFilter.AddError? {
+        var next = filter
+        switch next.add(text) {
+        case .success: setFilter(next); return nil
+        case .failure(let error): return error
+        }
+    }
+
+    func removeRule(_ pattern: String) {
+        var next = filter
+        next.remove(pattern)
+        setFilter(next)
+    }
+
+    func setRuleEnabled(_ enabled: Bool, for pattern: String) {
+        var next = filter
+        next.setEnabled(enabled, for: pattern)
+        setFilter(next)
+    }
+
+    /// Suffix patterns over every file the tree knows, shown and hidden alike.
+    func refreshSuggestions() {
+        let sim = box.simulation
+        suggestions = FileFilter.suggestions(for: sim.tree.files.union(sim.hidden.keys), excluding: filter, limit: Constants.filterSuggestionLimit)
     }
 
     // MARK: - Selection

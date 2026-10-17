@@ -108,6 +108,9 @@ public struct Ripple: Equatable, Sendable {
 /// The scene state: avatars, effects, tree animation and camera. Pure value type; the UI steps it once per frame.
 public struct Simulation: Sendable {
     public private(set) var tree: FileTree
+    /// Rules the user set; the files they hide are kept out of `tree` and remembered in `hidden` with their origins.
+    public internal(set) var filter: FileFilter
+    public internal(set) var hidden: [RepoPath: Set<Origin>] = [:]
     public private(set) var layout: RadialLayout
     public private(set) var avatars: [AgentID: AvatarState] = [:]
     public private(set) var avatarOrder: [AgentID] = []
@@ -126,7 +129,7 @@ public struct Simulation: Sendable {
     public private(set) var heat: [RepoPath: FileHeat] = [:]
     public private(set) var tints: [RepoPath: FileTint] = [:]
     /// Lit edges, keyed by the child end of the edge: a touch lights every edge from the root down to the file.
-    public private(set) var edgeTints: [RepoPath: FileTint] = [:]
+    public internal(set) var edgeTints: [RepoPath: FileTint] = [:]
     /// `now` of the latest `update`/`apply`; lets pure accessors age time-based state.
     public private(set) var clock = Date.distantPast
     public private(set) var renderPositions: [RepoPath: CGPoint] = [:]
@@ -162,9 +165,12 @@ public struct Simulation: Sendable {
     static let avatarHitRadius: CGFloat = 14
     static let nodeHitRadius: CGFloat = 8
 
-    public init(tree: FileTree, viewSize: CGSize = CGSize(width: 800, height: 500)) {
-        self.tree = tree
-        self.layout = RadialLayout.compute(tree)
+    public init(tree: FileTree, filter: FileFilter = FileFilter(), viewSize: CGSize = CGSize(width: 800, height: 500)) {
+        let (visible, hidden) = Self.partition(tree, by: filter)
+        self.tree = visible
+        self.filter = filter
+        self.hidden = hidden
+        self.layout = RadialLayout.compute(visible)
         self.renderPositions = layout.positions
         self.viewSize = viewSize
         rebuildGrid()
@@ -250,6 +256,8 @@ public struct Simulation: Sendable {
             let target: RepoPath
             switch t.scope {
             case .file:
+                // A hidden file is counted by the store but drawn nowhere; the sequence still advances so it is never replayed.
+                if filter.hides(t.path) { lastTouchSeq = max(lastTouchSeq, t.seq); continue }
                 ensureLaidOut(t.path, origin: t.worktree.map(Origin.worktree) ?? .main)
                 target = t.path
             case .directory:
@@ -288,7 +296,7 @@ public struct Simulation: Sendable {
     }
 
     /// Lights every edge from the root down to `path` with `tint`, merging into whatever each edge already has.
-    private mutating func light(pathTo path: RepoPath, with tint: FileTint, now: Date) {
+    mutating func light(pathTo path: RepoPath, with tint: FileTint, now: Date) {
         var node: RepoPath? = path
         while let n = node, !n.isRoot {
             Self.merge(tint, into: &edgeTints, at: n, now: now)
@@ -297,7 +305,7 @@ public struct Simulation: Sendable {
     }
 
     /// The newest touch sets the hue; strength never drops below what remains of the previous tint.
-    private static func merge(_ fresh: FileTint, into table: inout [RepoPath: FileTint], at key: RepoPath, now: Date) {
+    static func merge(_ fresh: FileTint, into table: inout [RepoPath: FileTint], at key: RepoPath, now: Date) {
         if let old = table[key], old.touchedAt > fresh.touchedAt { return }
         if table[key] == nil, now.timeIntervalSince(fresh.touchedAt) >= Constants.tintDuration { return }
         let remaining = table[key].map { tintStrength($0, at: now) } ?? 0
@@ -391,7 +399,7 @@ public struct Simulation: Sendable {
     }
 
     /// Recomputes the layout; existing nodes keep their render position and ease to the new one. New nodes start at `startPositions[path]`, else at their parent directory's render position, else at their layout position.
-    private mutating func relayout(startPositions: [RepoPath: CGPoint] = [:]) {
+    mutating func relayout(startPositions: [RepoPath: CGPoint] = [:]) {
         treeVersion += 1
         layout = RadialLayout.compute(tree)
         rebuildGrid()
@@ -412,7 +420,7 @@ public struct Simulation: Sendable {
     private mutating func revive(_ path: RepoPath) { dying.removeValue(forKey: path); born[path] = 0 }
 
     /// Cleanup shared by the end of the death fade and by name-swap conflicts. No relayout.
-    private mutating func finishDeath(_ path: RepoPath) {
+    mutating func finishDeath(_ path: RepoPath) {
         dying.removeValue(forKey: path); born.removeValue(forKey: path); landing.remove(path); renderPositions.removeValue(forKey: path)
         heat.removeValue(forKey: path); tints.removeValue(forKey: path); edgeTints.removeValue(forKey: path); touchedPaths.remove(path)
         tree.remove(file: path)
@@ -436,7 +444,8 @@ public struct Simulation: Sendable {
     /// Applies a watcher delta for one checkout: moved files glide from their old place, added files are born at their
     /// directory (a ghost gaining main lands), removed files lose that origin and fade out only when no origin is left.
     /// Only main may displace a clashing file or directory; another checkout's clashing path is simply not drawn.
-    public mutating func apply(delta: TreeDelta, now: Date) {
+    public mutating func apply(delta incoming: TreeDelta, now: Date) {
+        let delta = visibleRemainder(of: incoming)
         let o = delta.origin
         var starts: [RepoPath: CGPoint] = [:]
         for m in delta.moved {
@@ -471,10 +480,11 @@ public struct Simulation: Sendable {
             }
         }
         if !delta.added.isEmpty || !delta.moved.isEmpty { relayout(startPositions: starts) }
+        reconcileHidden(origin: o, snapshot: delta.snapshot)
     }
 
     /// Adds `p` as existing in `origin`: a dying file revives, a new one is born, a ghost that main gains lands.
-    private mutating func add(_ p: RepoPath, origin o: Origin) {
+    mutating func add(_ p: RepoPath, origin o: Origin) {
         if dying[p] != nil { revive(p); tree.insert(file: p, origin: o); return }
         let wasGhost = tree.isGhost(p)
         if o == .main, tree.node(p) == nil || tree.node(p)?.isDirectory == true { clearConflicts(for: p) }
