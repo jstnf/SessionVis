@@ -16,6 +16,12 @@ public struct AvatarState: Equatable, Sendable {
     public var title: String
     public var spawnAngle: CGFloat
     public var lastTouchPath: RepoPath?
+    /// Short commit hash (or "committed") pinned after a git commit; a push lifts it off.
+    public var badge: String?
+    public var badgeSeq: UInt64?
+    public var badgeLift: TimeInterval?
+    public var badgeAlpha: CGFloat { badgeLift.map { max(0, 1 - CGFloat($0 / Constants.badgeLiftDuration)) } ?? 1 }
+    public var badgeRise: CGFloat { badgeLift.map { min(1, CGFloat($0 / Constants.badgeLiftDuration)) } ?? 0 }
 }
 
 public struct Camera: Equatable, Sendable {
@@ -74,12 +80,40 @@ public struct Particle: Equatable, Sendable {
     public let hueIndex: Int
 }
 
+/// One Bash call: an expanding ring on the orb plus a label beside it.
+public struct Pulse: Equatable, Sendable {
+    public let id: UInt64
+    public let agent: AgentID
+    public let hueIndex: Int
+    public let label: String
+    public let milestone: Milestone?
+    public var age: TimeInterval
+    public var ringProgress: CGFloat { min(1, CGFloat(age / Constants.pulseDuration)) }
+    public var ringAlpha: CGFloat { max(0, 1 - CGFloat(age / Constants.pulseDuration)) }
+    /// Full for most of the label's life, fading over its last half second.
+    public var labelAlpha: CGFloat { min(1, max(0, CGFloat((Constants.pulseLabelDuration - age) / 0.5))) }
+    public static let lifetime = max(Constants.pulseDuration, Constants.pulseLabelDuration)
+}
+
+/// A commit's ripple: beads travel root-to-leaf along every edge the agent has lit, one depth level per `1/maxDepth` of progress.
+public struct Ripple: Equatable, Sendable {
+    public let agent: AgentID
+    public let hueIndex: Int
+    public let maxDepth: Int
+    public var age: TimeInterval
+    public var progress: CGFloat { min(1, CGFloat(age / Constants.rippleDuration)) }
+}
+
 /// The scene state: avatars, effects, tree animation and camera. Pure value type; the UI steps it once per frame.
 public struct Simulation: Sendable {
     public private(set) var tree: FileTree
     public private(set) var layout: RadialLayout
     public private(set) var avatars: [AgentID: AvatarState] = [:]
     public private(set) var avatarOrder: [AgentID] = []
+    public private(set) var pulses: [Pulse] = []
+    public private(set) var ripples: [Ripple] = []
+    public private(set) var lastCommandSeq: UInt64 = 0
+    private var nextPulseId: UInt64 = 1
     public private(set) var camera = Camera()
     public private(set) var followedAgent: AgentID?
     public private(set) var viewSize: CGSize
@@ -97,6 +131,9 @@ public struct Simulation: Sendable {
     public private(set) var renderPositions: [RepoPath: CGPoint] = [:]
     public private(set) var dying: [RepoPath: TimeInterval] = [:]
     public private(set) var born: [RepoPath: TimeInterval] = [:]
+    /// Former ghosts whose birth animation is a landing (ring filling into a dot).
+    public private(set) var landing: Set<RepoPath> = []
+    public func isLanding(_ path: RepoPath) -> Bool { landing.contains(path) }
     public private(set) var touchedPaths: Set<RepoPath> = []
     public private(set) var treeVersion = 0
     /// Absolute directory the tree is rooted at; enables the existence check when reconciling a watcher snapshot.
@@ -154,7 +191,45 @@ public struct Simulation: Sendable {
             recentTouches.removeValue(forKey: id)
         }
         avatarOrder.removeAll { !seen.contains($0) }
+        let priming = !primed
         ingest(touches: snapshot.recentTouches.filter { $0.seq > lastTouchSeq }, now: now)
+        ingest(commands: snapshot.recentCommands, now: now, priming: priming)
+    }
+
+    /// New command events pulse the orb; git milestones add their effects. The priming pass only records the sequence.
+    /// Commit info can arrive on an already-seen event, so badges are refreshed from every event in the snapshot.
+    mutating func ingest(commands: [CommandEvent], now: Date, priming: Bool) {
+        for c in commands where c.seq > lastCommandSeq {
+            lastCommandSeq = c.seq
+            guard !priming, var av = avatars[c.agent] else { continue }
+            pulses.append(Pulse(id: nextPulseId, agent: c.agent, hueIndex: av.hueIndex, label: c.label, milestone: c.milestone, age: 0))
+            nextPulseId += 1
+            switch c.milestone {
+            case .commit(let info):
+                commitEffects(agent: c.agent, hue: av.hueIndex, now: now)
+                av.badge = info?.shortHash ?? "committed"; av.badgeSeq = c.seq; av.badgeLift = nil
+            case .push:
+                if av.badge != nil, av.badgeLift == nil { av.badgeLift = 0 }
+            case .merge, .rebase, nil:
+                break
+            }
+            avatars[c.agent] = av
+        }
+        for c in commands {
+            guard let info = c.commit, var av = avatars[c.agent], av.badgeSeq == c.seq, av.badge != info.shortHash else { continue }
+            av.badge = info.shortHash
+            avatars[c.agent] = av
+        }
+    }
+
+    /// Ripple along the agent's lit edges, flash its tinted files, and drop their tint to the committed floor.
+    private mutating func commitEffects(agent: AgentID, hue: Int, now: Date) {
+        let depth = edgeTints.filter { $0.value.toucher == agent }.keys.map(\.depth).max() ?? 1
+        ripples.append(Ripple(agent: agent, hueIndex: hue, maxDepth: max(1, depth), age: 0))
+        for (path, t) in tints where t.toucher == agent {
+            tints[path] = FileTint(hueIndex: t.hueIndex, strength: Constants.committedTintFloor, toucher: agent, toucherTitle: t.toucherTitle, touchedAt: now)
+            heat[path] = FileHeat(value: Constants.heatWrite, hueIndex: t.hueIndex)
+        }
     }
 
     private mutating func spawnAvatar(for a: AgentSnapshot) -> AvatarState {
@@ -163,7 +238,7 @@ public struct Simulation: Sendable {
         if a.isSubagent, let p = a.parent, let parentAvatar = avatars[p] { pos = parentAvatar.position }
         return AvatarState(id: a.id, position: pos, target: pos, anchor: pos, scale: 0, renderScale: 0, alpha: 1,
                            hueIndex: a.hueIndex, isSubagent: a.isSubagent, parent: a.parent, status: a.status,
-                           title: a.title, spawnAngle: angle, lastTouchPath: nil)
+                           title: a.title, spawnAngle: angle, lastTouchPath: nil, badge: nil, badgeSeq: nil, badgeLift: nil)
     }
 
     /// Records touches for positioning and fires effects. The first call is a priming pass (history: heat and tint, no beams).
@@ -171,7 +246,7 @@ public struct Simulation: Sendable {
         let priming = !primed
         primed = true
         for t in touches {
-            ensureLaidOut(t.path)
+            ensureLaidOut(t.path, origin: t.worktree.map(Origin.worktree) ?? .main)
             touchedPaths.insert(t.path)
             recentTouches[t.agent, default: []].append(TouchRef(path: t.path, at: t.at))
             avatars[t.agent]?.lastTouchPath = t.path
@@ -257,6 +332,10 @@ public struct Simulation: Sendable {
     private mutating func updateEffects(dt: TimeInterval) {
         for i in beams.indices { beams[i].age += dt }
         beams.removeAll { $0.age >= Constants.beamDuration }
+        for i in pulses.indices { pulses[i].age += dt }
+        pulses.removeAll { $0.age >= Pulse.lifetime }
+        for i in ripples.indices { ripples[i].age += dt }
+        ripples.removeAll { $0.age >= Constants.rippleDuration }
 
         for (path, var h) in heat {
             h.value -= Constants.heatDecayPerSecond * CGFloat(dt)
@@ -286,10 +365,10 @@ public struct Simulation: Sendable {
         return pts
     }
 
-    mutating func ensureLaidOut(_ path: RepoPath) {
-        if dying[path] != nil { revive(path); return }
+    mutating func ensureLaidOut(_ path: RepoPath, origin: Origin) {
+        if dying[path] != nil { revive(path); tree.insert(file: path, origin: origin); return }
         guard layout.position(path) == nil else { return }
-        tree.insert(file: path)
+        guard tree.insert(file: path, origin: origin) else { return }
         relayout()
     }
 
@@ -316,7 +395,7 @@ public struct Simulation: Sendable {
 
     /// Cleanup shared by the end of the death fade and by name-swap conflicts. No relayout.
     private mutating func finishDeath(_ path: RepoPath) {
-        dying.removeValue(forKey: path); born.removeValue(forKey: path); renderPositions.removeValue(forKey: path)
+        dying.removeValue(forKey: path); born.removeValue(forKey: path); landing.remove(path); renderPositions.removeValue(forKey: path)
         heat.removeValue(forKey: path); tints.removeValue(forKey: path); edgeTints.removeValue(forKey: path); touchedPaths.remove(path)
         tree.remove(file: path)
     }
@@ -336,29 +415,63 @@ public struct Simulation: Sendable {
         }
     }
 
-    /// Applies a watcher delta: moved files glide from their old place, added files are born at their directory, removed files fade out.
+    /// Applies a watcher delta for one checkout: moved files glide from their old place, added files are born at their
+    /// directory (a ghost gaining main lands), removed files lose that origin and fade out only when no origin is left.
+    /// Only main may displace a clashing file or directory; another checkout's clashing path is simply not drawn.
     public mutating func apply(delta: TreeDelta, now: Date) {
+        let o = delta.origin
         var starts: [RepoPath: CGPoint] = [:]
         for m in delta.moved {
+            // A file other checkouts also hold stays where it is for them; this checkout's copy appears at the new path.
+            guard let from = tree.node(m.from), !from.isDirectory, from.origins == [o] else {
+                tree.remove(file: m.from, origin: o)
+                add(m.to, origin: o)
+                continue
+            }
             if let old = renderPositions[m.from] { starts[m.to] = old }
             tree.remove(file: m.from)
-            renderPositions.removeValue(forKey: m.from); heat.removeValue(forKey: m.from); if touchedPaths.remove(m.from) != nil { touchedPaths.insert(m.to) }; dying.removeValue(forKey: m.from); born.removeValue(forKey: m.from)
+            renderPositions.removeValue(forKey: m.from); heat.removeValue(forKey: m.from); if touchedPaths.remove(m.from) != nil { touchedPaths.insert(m.to) }; dying.removeValue(forKey: m.from); born.removeValue(forKey: m.from); landing.remove(m.from)
             if let t = tints.removeValue(forKey: m.from) { tints[m.to] = t }
             edgeTints.removeValue(forKey: m.from)
-            if dying[m.to] != nil { revive(m.to) } else { clearConflicts(for: m.to); tree.insert(file: m.to) }
+            if dying[m.to] != nil { revive(m.to) } else if o == .main { clearConflicts(for: m.to) }
+            tree.insert(file: m.to, origin: o)
+            guard tree.node(m.to)?.isDirectory == false else {
+                // The destination clashes with another checkout's tree: this file is not drawn, so it keeps no effects.
+                starts.removeValue(forKey: m.to); tints.removeValue(forKey: m.to); touchedPaths.remove(m.to)
+                continue
+            }
             if let t = tints[m.to] { light(pathTo: m.to, with: t, now: now) }
         }
-        for p in delta.added {
-            if dying[p] != nil { revive(p) } else if tree.node(p)?.isDirectory != false { clearConflicts(for: p); tree.insert(file: p); born[p] = 0 }
-        }
-        for p in delta.removed where tree.node(p) != nil && dying[p] == nil { dying[p] = 0 }
+        for p in delta.added { add(p, origin: o) }
+        for p in delta.removed { drop(p, from: o) }
         if let snap = delta.snapshot, let root = rootPath {
-            // Touch-inserted files the watcher never saw: fade them unless they really exist (e.g. gitignored files an agent wrote).
-            for p in tree.files where !snap.contains(p) && dying[p] == nil {
-                if !FileManager.default.fileExists(atPath: root + "/" + p.string) { dying[p] = 0 }
+            // Files this checkout no longer lists: keep the ones that really exist (e.g. gitignored files an agent wrote).
+            let originRoot = o.rootPath(under: root)
+            for p in tree.files(in: o) where !snap.contains(p) && dying[p] == nil {
+                if FileManager.default.fileExists(atPath: originRoot + "/" + p.string) { continue }
+                drop(p, from: o)
             }
         }
         if !delta.added.isEmpty || !delta.moved.isEmpty { relayout(startPositions: starts) }
+    }
+
+    /// Adds `p` as existing in `origin`: a dying file revives, a new one is born, a ghost that main gains lands.
+    private mutating func add(_ p: RepoPath, origin o: Origin) {
+        if dying[p] != nil { revive(p); tree.insert(file: p, origin: o); return }
+        let wasGhost = tree.isGhost(p)
+        if o == .main, tree.node(p) == nil || tree.node(p)?.isDirectory == true { clearConflicts(for: p) }
+        if tree.insert(file: p, origin: o) {
+            born[p] = 0
+        } else if wasGhost, o == .main {
+            born[p] = 0
+            landing.insert(p)
+        }
+    }
+
+    /// Takes `origin` away from a file: it starts dying when that was its last origin, else it just loses the origin.
+    private mutating func drop(_ p: RepoPath, from origin: Origin) {
+        guard let n = tree.node(p), !n.isDirectory, dying[p] == nil else { return }
+        if n.origins.subtracting([origin]).isEmpty { dying[p] = 0 } else { tree.remove(file: p, origin: origin) }
     }
 
     private mutating func updateTreeTransitions(dt: TimeInterval) {
@@ -368,6 +481,7 @@ public struct Simulation: Sendable {
         }
         for path in born.keys { born[path]! += dt }
         born = born.filter { $0.value < Constants.birthDuration }
+        landing = landing.filter { born[$0] != nil }
         var finished: [RepoPath] = []
         for path in dying.keys { dying[path]! += dt; if dying[path]! >= Constants.deathDuration { finished.append(path) } }
         guard !finished.isEmpty else { return }
@@ -419,6 +533,10 @@ public struct Simulation: Sendable {
             av.position = Geometry.lerp(av.position, av.target, k)
             let pulse: CGFloat = av.status.isWaiting ? 1 + 0.15 * CGFloat(0.5 + 0.5 * sin(2 * .pi * time)) : 1
             av.renderScale = av.scale * pulse
+            if let lift = av.badgeLift {
+                let next = lift + dt
+                if next >= Constants.badgeLiftDuration { av.badge = nil; av.badgeSeq = nil; av.badgeLift = nil } else { av.badgeLift = next }
+            }
             avatars[id] = av
         }
         for id in avatarOrder {

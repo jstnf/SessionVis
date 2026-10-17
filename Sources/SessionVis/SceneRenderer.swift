@@ -18,8 +18,11 @@ enum SceneRenderer {
         drawNodes(sim, &ctx, viewport)
         drawHalos(sim, &ctx)
         drawBeams(sim, &ctx)
+        drawRipples(sim, &ctx)
         drawParticles(sim, &ctx)
         drawAvatars(sim, &ctx)
+        drawPulses(sim, &ctx)
+        drawBadges(sim, &ctx)
         drawLabels(sim, hover: hover, &ctx, viewport)
     }
 
@@ -34,8 +37,8 @@ enum SceneRenderer {
 
     // 1. Edges: plain grey batched, lit edges batched per hue/level (blended toward the hue and widened by strength), dying ones last.
     private static func drawEdges(_ sim: Simulation, _ ctx: inout GraphicsContext, _ viewport: CGRect) {
-        var path = Path()
-        var lit: [TintKey: Path] = [:]
+        var path = Path(), ghostPath = Path()
+        var lit: [TintKey: Path] = [:], ghostLit: [TintKey: Path] = [:]
         var fading: [(Path, Double)] = []
         for node in sim.tree.nodes.values {
             guard let parent = node.path.parent,
@@ -46,27 +49,38 @@ enum SceneRenderer {
             var seg = Path()
             seg.move(to: sa)
             seg.addLine(to: sb)
+            let ghost = node.isGhost
             if let alpha = sim.deathAlpha(node.path) {
                 fading.append((seg, Double(alpha)))
             } else if let t = sim.edgeTint(node.path), case let level = Int((t.strength * CGFloat(tintLevels)).rounded()), level > 0 {
-                lit[TintKey(hue: t.hueIndex, level: level), default: Path()].addPath(seg)
+                if ghost { ghostLit[TintKey(hue: t.hueIndex, level: level), default: Path()].addPath(seg) }
+                else { lit[TintKey(hue: t.hueIndex, level: level), default: Path()].addPath(seg) }
+            } else if ghost {
+                ghostPath.addPath(seg)
             } else {
                 path.addPath(seg)
             }
         }
         ctx.stroke(path, with: .color(Palette.edge), lineWidth: Constants.edgeWidth)
+        ctx.stroke(ghostPath, with: .color(Palette.edge), style: StrokeStyle(lineWidth: Constants.edgeWidth, dash: Constants.ghostDash))
         for (key, seg) in lit {
             let strength = Double(key.level) / Double(tintLevels)
             ctx.stroke(seg, with: .color(Palette.mix(Palette.edgeRGB, HuePalette.hue(key.hue), strength)),
                        lineWidth: Constants.edgeWidth + (Constants.litEdgeWidth - Constants.edgeWidth) * CGFloat(strength))
+        }
+        for (key, seg) in ghostLit {
+            let strength = Double(key.level) / Double(tintLevels)
+            ctx.stroke(seg, with: .color(Palette.mix(Palette.edgeRGB, HuePalette.hue(key.hue), strength)),
+                       style: StrokeStyle(lineWidth: Constants.edgeWidth + (Constants.litEdgeWidth - Constants.edgeWidth) * CGFloat(strength), dash: Constants.ghostDash))
         }
         for (seg, alpha) in fading { ctx.stroke(seg, with: .color(Palette.edge.opacity(alpha)), lineWidth: Constants.edgeWidth) }
     }
 
     // 2. Nodes: glows per hot node, then batched fills (untouched files; directories and touched files; tinted files per hue/level).
     private static func drawNodes(_ sim: Simulation, _ ctx: inout GraphicsContext, _ viewport: CGRect) {
-        var dim = Path(), bright = Path()
-        var tinted: [TintKey: Path] = [:]
+        var dim = Path(), bright = Path(), ghostRings = Path()
+        var tinted: [TintKey: Path] = [:], ghostTinted: [TintKey: Path] = [:]
+        var landingRings: [(Path, Double)] = []
         for node in sim.tree.nodes.values {
             guard let w = sim.position(of: node.path) else { continue }
             let p = sim.worldToScreen(w)
@@ -84,6 +98,15 @@ enum SceneRenderer {
             }
             let rect = CGRect(x: p.x - r, y: p.y - r, width: 2 * r, height: 2 * r)
             if node.isDirectory { bright.addEllipse(in: rect); continue }
+            let ringRect = CGRect(x: p.x - Constants.ghostRingRadius, y: p.y - Constants.ghostRingRadius,
+                                  width: 2 * Constants.ghostRingRadius, height: 2 * Constants.ghostRingRadius)
+            if node.isGhost {
+                if let t = sim.tint(node.path), case let level = Int((t.strength * CGFloat(tintLevels)).rounded()), level > 0 {
+                    ghostTinted[TintKey(hue: t.hueIndex, level: level), default: Path()].addEllipse(in: ringRect)
+                } else { ghostRings.addEllipse(in: ringRect) }
+                continue
+            }
+            if sim.isLanding(node.path) { landingRings.append((Path(ellipseIn: ringRect), Double(1 - scale))) }
             if let t = sim.tint(node.path), case let level = Int((t.strength * CGFloat(tintLevels)).rounded()), level > 0 {
                 tinted[TintKey(hue: t.hueIndex, level: level), default: Path()].addEllipse(in: rect)
             } else if sim.touchedPaths.contains(node.path) { bright.addEllipse(in: rect) } else { dim.addEllipse(in: rect) }
@@ -93,6 +116,11 @@ enum SceneRenderer {
         for (key, path) in tinted {
             ctx.fill(path, with: .color(Palette.mix(Palette.nodeRGB, HuePalette.hue(key.hue), Double(key.level) / Double(tintLevels))))
         }
+        ctx.stroke(ghostRings, with: .color(Palette.ghost), lineWidth: Constants.ghostRingWidth)
+        for (key, path) in ghostTinted {
+            ctx.stroke(path, with: .color(Palette.mix(Palette.nodeRGB, HuePalette.hue(key.hue), Double(key.level) / Double(tintLevels))), lineWidth: Constants.ghostRingWidth)
+        }
+        for (path, alpha) in landingRings { ctx.stroke(path, with: .color(Palette.ghost.opacity(alpha)), lineWidth: Constants.ghostRingWidth) }
     }
 
     /// Non-root directories in path order, recomputed only when the tree version changes.
@@ -148,6 +176,22 @@ enum SceneRenderer {
         }
     }
 
+    // 4b. Ripples: a bead per lit edge of the committing agent, travelling parent → child one depth level at a time.
+    private static func drawRipples(_ sim: Simulation, _ ctx: inout GraphicsContext) {
+        for r in sim.ripples {
+            guard let av = sim.avatars[r.agent], av.alpha > 0.02 else { continue }
+            let color = av.isSubagent ? Palette.tint(r.hueIndex) : Palette.hue(r.hueIndex)
+            for (path, t) in sim.edgeTints where t.toucher == r.agent {
+                guard let parent = path.parent, let a = sim.position(of: parent), let b = sim.position(of: path) else { continue }
+                let u = r.progress * CGFloat(r.maxDepth) - CGFloat(path.depth - 1)
+                guard u >= 0, u <= 1.3 else { continue }
+                let bead = Geometry.lerp(sim.worldToScreen(a), sim.worldToScreen(b), min(1, u))
+                let alpha = u <= 1 ? 0.9 : 0.9 * Double(1 - (u - 1) / 0.3)
+                ctx.fill(circle(bead, 1.8), with: .color(color.opacity(alpha)))
+            }
+        }
+    }
+
     // 5. Particles
     private static func drawParticles(_ sim: Simulation, _ ctx: inout GraphicsContext) {
         for p in sim.particles {
@@ -174,6 +218,37 @@ enum SceneRenderer {
             let alpha: Double = { if case .idle = av.status { return av.alpha * 0.6 } else { return av.alpha } }()
             glow(&ctx, at: p, radius: 2.2 * r, color: hue, centerAlpha: 0.6 * alpha)
             ctx.fill(circle(p, r), with: .color(hue.opacity(alpha)))
+        }
+    }
+
+    // 7b. Pulses: rings expanding from the orb (doubled for a push).
+    private static func drawPulses(_ sim: Simulation, _ ctx: inout GraphicsContext) {
+        for p in sim.pulses where p.ringAlpha > 0 {
+            guard let av = sim.avatars[p.agent] else { continue }
+            let c = sim.worldToScreen(av.position)
+            let base: CGFloat = av.isSubagent ? 5.5 : 11
+            let r = base + p.ringProgress * Constants.pulseRadius
+            let color = (av.isSubagent ? Palette.tint(p.hueIndex) : Palette.hue(p.hueIndex)).opacity(0.55 * Double(p.ringAlpha))
+            let width: CGFloat = p.milestone == nil ? 1 : 1.6
+            ctx.stroke(circle(c, r), with: .color(color), lineWidth: width)
+            if p.milestone == .push { ctx.stroke(circle(c, r * 0.8), with: .color(color), lineWidth: width) }
+        }
+    }
+
+    // 7c. Commit badges: a pill with the short hash above the orb; a push lifts it up and fades it.
+    private static func drawBadges(_ sim: Simulation, _ ctx: inout GraphicsContext) {
+        for id in sim.avatarOrder {
+            guard let av = sim.avatars[id], let badge = av.badge, av.alpha > 0.02 else { continue }
+            let p = sim.worldToScreen(av.position)
+            let center = CGPoint(x: p.x, y: p.y - 20 - 40 * av.badgeRise)
+            let alpha = Double(av.badgeAlpha) * av.alpha
+            let text = Text(badge).font(mono9)
+            let size = ctx.resolve(text).measure(in: CGSize(width: 200, height: 20))
+            let rect = CGRect(x: center.x - size.width / 2 - 5, y: center.y - 7, width: size.width + 10, height: 14)
+            let pill = Path(roundedRect: rect, cornerRadius: 4)
+            ctx.fill(pill, with: .color(Palette.rowHighlight.opacity(0.95 * alpha)))
+            ctx.stroke(pill, with: .color(Palette.hue(av.hueIndex).opacity(0.9 * alpha)), lineWidth: 0.8)
+            ctx.draw(text.foregroundStyle(Palette.text.opacity(alpha)), at: center, anchor: .center)
         }
     }
 
@@ -218,6 +293,15 @@ enum SceneRenderer {
                 ctx.draw(Text(av.title).font(mono10).foregroundStyle(Palette.text.opacity(av.alpha)),
                          at: CGPoint(x: p.x, y: p.y + 24), anchor: .top)
             }
+        }
+        var stack: [AgentID: Int] = [:]
+        for p in sim.pulses where p.labelAlpha > 0 {
+            guard let av = sim.avatars[p.agent], av.alpha > 0.02 else { continue }
+            let i = stack[p.agent, default: 0]
+            stack[p.agent] = i + 1
+            let o = sim.worldToScreen(av.position)
+            let color = (av.isSubagent ? Palette.tint(p.hueIndex) : Palette.hue(p.hueIndex)).opacity(0.85 * Double(p.labelAlpha) * av.alpha)
+            ctx.draw(Text(p.label).font(mono9).foregroundStyle(color), at: CGPoint(x: o.x + 16, y: o.y - 4 - CGFloat(13 * i)), anchor: .leading)
         }
     }
 }

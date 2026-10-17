@@ -62,13 +62,24 @@ public enum TranscriptParser {
         guard let blocks = message["content"] as? [[String: Any]] else { return [] }
         let results = blocks.compactMap { b -> TranscriptEvent? in
             guard b["type"] as? String == "tool_result", let id = b["tool_use_id"] as? String else { return nil }
-            return .toolResult(toolUseId: id)
+            return .toolResult(toolUseId: id, text: resultText(b["content"]))
         }
         if !results.isEmpty { return results }
         let text = blocks.compactMap { b -> String? in
             b["type"] as? String == "text" ? b["text"] as? String : nil
         }.joined()
         return promptIfAllowed(text, isMeta: isMeta)
+    }
+
+    /// The text of a tool result: a plain string, or the `text` blocks joined by newlines; nil when empty. Capped.
+    private static func resultText(_ content: Any?) -> String? {
+        let text: String
+        if let s = content as? String { text = s }
+        else if let blocks = content as? [[String: Any]] {
+            text = blocks.compactMap { $0["type"] as? String == "text" ? $0["text"] as? String : nil }.joined(separator: "\n")
+        } else { return nil }
+        guard !text.isEmpty else { return nil }
+        return String(text.prefix(Constants.toolResultTextLimit))
     }
 
     private static func promptIfAllowed(_ text: String, isMeta: Bool) -> [TranscriptEvent] {
@@ -109,8 +120,9 @@ public enum TranscriptParser {
                 }
                 let question = (name == "AskUserQuestion")
                     ? ((input["questions"] as? [[String: Any]])?.first?["question"] as? String) : nil
+                let command: String? = name == "Bash" ? (input["command"] as? String).map { String($0.prefix(Constants.commandTextLimit)) } : nil
                 out.append(.toolUse(id: id, name: name, filePath: filePath,
-                                    description: input["description"] as? String, question: question))
+                                    description: input["description"] as? String, question: question, command: command))
             default:
                 continue
             }

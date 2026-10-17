@@ -10,11 +10,13 @@ public struct TreeDelta: Equatable, Sendable {
     public var added: [RepoPath]
     public var removed: [RepoPath]
     public var moved: [Move]
-    /// The full file set the watcher saw (spec R34); the simulation uses it to reconcile touch-inserted phantoms.
+    /// Which checkout the change happened in. Paths are already relative to that checkout's root.
+    public var origin: Origin
+    /// The full file set the watcher saw for `origin`; the simulation uses it to reconcile touch-inserted phantoms.
     public var snapshot: Set<RepoPath>?
 
-    public init(added: [RepoPath] = [], removed: [RepoPath] = [], moved: [Move] = [], snapshot: Set<RepoPath>? = nil) {
-        self.added = added; self.removed = removed; self.moved = moved; self.snapshot = snapshot
+    public init(added: [RepoPath] = [], removed: [RepoPath] = [], moved: [Move] = [], origin: Origin = .main, snapshot: Set<RepoPath>? = nil) {
+        self.added = added; self.removed = removed; self.moved = moved; self.origin = origin; self.snapshot = snapshot
     }
 
     /// For truncated scans: removals whose path still exists are not real. A move whose source still exists becomes a plain add.

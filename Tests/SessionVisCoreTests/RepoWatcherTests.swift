@@ -60,6 +60,36 @@ import Testing
         #expect(!w.lastScanTruncated)
         w.stop()
     }
+
+    @Test func emitsOneDeltaPerChangedOrigin() async throws {
+        let d = FileManager.default.temporaryDirectory.appendingPathComponent("watch-wt-\(UUID().uuidString)")
+        let wt = d.appendingPathComponent(".claude/worktrees/feat")
+        try FileManager.default.createDirectory(at: d.appendingPathComponent("Sources"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: wt.appendingPathComponent("Sources"), withIntermediateDirectories: true)
+        try "a".write(to: d.appendingPathComponent("Sources/A.swift"), atomically: true, encoding: .utf8)
+        try "a".write(to: wt.appendingPathComponent("Sources/A.swift"), atomically: true, encoding: .utf8)
+        let w = RepoWatcher(directory: d.path, initial: FileTreeScanner.scan(directory: d.path))
+        let reader = DeltaReader(w.deltas)
+        try "g".write(to: wt.appendingPathComponent("Sources/G.swift"), atomically: true, encoding: .utf8)
+        w.rescan()
+        let first = try #require(await reader.next())
+        #expect(first.origin == .worktree("feat"))
+        #expect(first.added == [RepoPath(string: "Sources/G.swift")] && first.removed.isEmpty)
+        #expect(first.snapshot == [RepoPath(string: "Sources/A.swift"), RepoPath(string: "Sources/G.swift")])
+        // Both origins change: main first, then the worktree.
+        try "b".write(to: d.appendingPathComponent("Sources/B.swift"), atomically: true, encoding: .utf8)
+        try FileManager.default.removeItem(at: wt)
+        w.rescan()
+        let main = try #require(await reader.next())
+        #expect(main.origin == .main && main.added == [RepoPath(string: "Sources/B.swift")])
+        let gone = try #require(await reader.next())
+        #expect(gone.origin == .worktree("feat"))
+        #expect(Set(gone.removed) == [RepoPath(string: "Sources/A.swift"), RepoPath(string: "Sources/G.swift")])
+        #expect(gone.snapshot == [])
+        w.rescan()
+        w.stop()
+        #expect(await reader.next() == nil)
+    }
 }
 
 final class DeltaReader: @unchecked Sendable {

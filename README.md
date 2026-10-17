@@ -29,6 +29,8 @@ What you can check by hand:
 - Hover tooltips on files and orbs.
 - Files recently touched are tinted in the toucher's colour and fade back to grey over two minutes; the tooltip names the last toucher for the same window.
 - The edges from the root down to a touched file light up in the same colour, slightly thicker, and fade on the same schedule, so each session leaves a visible trail through the tree; an edge shared by several touched files takes the colour of the most recent toucher.
+- Files that exist only in a `.claude/worktrees` checkout draw as hollow rings on dashed edges, seeded from disk at launch. A ring fills into a dot when the file lands in the main checkout, and dies red when its worktree is removed. The tooltip names the worktree.
+- Every Bash call pulses the calling orb with a short label. A git commit ripples along the edges that session has lit, drops its files' tint to a faint floor and pins the short hash above the orb; a push lifts the badge off. The session list shows the running command and the latest git milestone.
 - A subagent fades out within a few seconds of finishing, whether it ran in the foreground or in the background (its final hand-back call and the parent's task notification both count as the end).
 - ⌘L collapses and expands the session list.
 - ⌘, opens settings with the hook snippet.
@@ -36,7 +38,9 @@ What you can check by hand:
 ## Known gaps
 
 - File changes on disk (including deletions and moves) are picked up by an FSEvents watcher within about half a second; deletions fade out red, moves glide. They are not attributed to an agent.
-- Phantom-file reconciliation (files an agent touched that do not exist) relies on a filesystem existence check, so gitignored files an agent really wrote stay visible.
+- Phantom-file reconciliation (files an agent touched that do not exist) relies on a filesystem existence check under the main checkout and each worktree, so gitignored files an agent really wrote stay visible.
+- Command classification scans the `&&`-, `;`- and newline-chained segments of a shell command, and each git commit, push, merge or rebase in the chain counts as its own milestone, in order (so `git commit … && git push` commits and then lifts the badge). An unusual wrapper (an alias, a script that commits) will not register.
+- Worktrees outside `.claude/worktrees` are not recognised.
 - Directory renames animate as per-file moves.
 - `.git` churn triggers rescans (cheap).
 - Hover is not refreshed while panning under a still cursor.

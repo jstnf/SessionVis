@@ -161,7 +161,7 @@ enum SourceFixtures {
         _ = await (a, b)
         var ids: [String] = []
         while ids.count < 50, let e = await reader.next() {
-            if case .line("s1", nil, let l) = e, case .toolUse(let id, _, _, _, _) = l.event { ids.append(id) }
+            if case .line("s1", nil, let l) = e, case .toolUse(let id, _, _, _, _, _) = l.event { ids.append(id) }
         }
         #expect(ids == (0..<50).map { "tu\($0)" })
         await source.stop()

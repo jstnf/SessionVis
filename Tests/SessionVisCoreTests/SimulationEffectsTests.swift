@@ -170,4 +170,67 @@ import Testing
         #expect(abs(sim.edgeTint(RepoPath(string: "A"))!.strength - Constants.tintWrite * 0.75) < 0.001)
         #expect(abs(sim.edgeTint(b)!.strength - Constants.tintWrite * 0.75) < 0.001)
     }
+
+    @Test func commandSpawnsPulseWithLabelAndNothingOnPriming() {
+        var sim = Simulation(tree: F.tree())
+        sim.apply(snapshot: StoreSnapshot(agents: [F.agent("s1")], recentCommands: [F.command(1, "s1", "ls")]), now: F.t0)
+        #expect(sim.pulses.isEmpty && sim.lastCommandSeq == 1)                       // history primes silently
+        sim.apply(snapshot: StoreSnapshot(agents: [F.agent("s1")], recentCommands: [F.command(1, "s1", "ls"), F.command(2, "s1", "swift test", label: "Run tests")]), now: F.t0)
+        #expect(sim.pulses.count == 1)
+        #expect(sim.pulses[0].agent == s1 && sim.pulses[0].label == "Run tests" && sim.pulses[0].milestone == nil && sim.pulses[0].age == 0)
+        #expect(sim.pulses[0].ringProgress == 0 && sim.pulses[0].ringAlpha == 1 && sim.pulses[0].labelAlpha == 1)
+        sim.update(dt: Constants.pulseDuration / 2, now: F.t0)
+        #expect(abs(sim.pulses[0].ringProgress - 0.5) < 0.01 && abs(sim.pulses[0].ringAlpha - 0.5) < 0.01)
+        sim.update(dt: Constants.pulseLabelDuration, now: F.t0)
+        #expect(sim.pulses.isEmpty)                                                  // gone once the label has expired
+        #expect(sim.lastCommandSeq == 2)
+    }
+
+    @Test func commitRipplesLitEdgesDropsTintsToFloorAndBadgesTheOrb() {
+        var sim = primed()
+        sim.apply(snapshot: StoreSnapshot(agents: [F.agent("s1"), F.agent("s2", hue: 1)], recentTouches: [
+            F.touch(1, "s1", "A/a.swift"), F.touch(2, "s2", "B/c.swift", hue: 1)]), now: F.t0)
+        let later = F.t0.addingTimeInterval(10)
+        sim.apply(snapshot: StoreSnapshot(agents: [F.agent("s1"), F.agent("s2", hue: 1)], recentTouches: [
+            F.touch(1, "s1", "A/a.swift"), F.touch(2, "s2", "B/c.swift", hue: 1)],
+            recentCommands: [F.command(1, "s1", "git commit -m x", at: later)]), now: later)
+        #expect(sim.pulses.count == 1 && sim.pulses[0].milestone == .commit(nil))
+        #expect(sim.ripples.count == 1 && sim.ripples[0].agent == s1 && sim.ripples[0].maxDepth == 2)
+        #expect(sim.tints[a]?.strength == Constants.committedTintFloor && sim.tints[a]?.touchedAt == later)
+        #expect(sim.heatValue(a) == Constants.heatWrite)                            // the flash
+        #expect(sim.tints[RepoPath(string: "B/c.swift")]?.strength == Constants.tintWrite)   // another agent's files untouched
+        #expect(sim.avatars[s1]?.badge == "committed" && sim.avatars[s1]?.badgeLift == nil)
+        // The hash arrives later on the same event: the badge updates without a new pulse.
+        let info = CommitInfo(hash: "a1b2c3d4", branch: "main", message: "x")
+        sim.apply(snapshot: StoreSnapshot(agents: [F.agent("s1"), F.agent("s2", hue: 1)],
+            recentCommands: [F.command(1, "s1", "git commit -m x", at: later, commit: info)]), now: later)
+        #expect(sim.pulses.count == 1 && sim.avatars[s1]?.badge == "a1b2c3d")
+        sim.update(dt: Constants.rippleDuration + 0.1, now: later)
+        #expect(sim.ripples.isEmpty)
+    }
+
+    @Test func pushLiftsTheBadgeOff() {
+        var sim = primed()
+        let info = CommitInfo(hash: "a1b2c3d", branch: "main", message: "x")
+        sim.apply(snapshot: StoreSnapshot(agents: [F.agent("s1")], recentCommands: [F.command(1, "s1", "git commit -m x", commit: info)]), now: F.t0)
+        #expect(sim.avatars[s1]?.badge == "a1b2c3d")
+        sim.apply(snapshot: StoreSnapshot(agents: [F.agent("s1")], recentCommands: [F.command(1, "s1", "git commit -m x", commit: info), F.command(2, "s1", "git push")]), now: F.t0)
+        #expect(sim.pulses.last?.milestone == .push)
+        #expect(sim.avatars[s1]?.badgeLift == 0 && sim.avatars[s1]?.badgeAlpha == 1 && sim.avatars[s1]?.badgeRise == 0)
+        sim.update(dt: Constants.badgeLiftDuration / 2, now: F.t0)
+        #expect(abs(sim.avatars[s1]!.badgeAlpha - 0.5) < 0.05 && abs(sim.avatars[s1]!.badgeRise - 0.5) < 0.05)
+        sim.update(dt: Constants.badgeLiftDuration, now: F.t0)
+        #expect(sim.avatars[s1]?.badge == nil && sim.avatars[s1]?.badgeLift == nil)
+        // A push with no badge is just a pulse.
+        sim.apply(snapshot: StoreSnapshot(agents: [F.agent("s1")], recentCommands: [F.command(3, "s1", "git push")]), now: F.t0)
+        #expect(sim.avatars[s1]?.badge == nil && sim.avatars[s1]?.badgeLift == nil)
+    }
+
+    @Test func mergeAndRebaseOnlyPulse() {
+        var sim = primed()
+        sim.apply(snapshot: StoreSnapshot(agents: [F.agent("s1")], recentTouches: [F.touch(1, "s1", "A/a.swift")]), now: F.t0)
+        sim.apply(snapshot: StoreSnapshot(agents: [F.agent("s1")], recentCommands: [F.command(1, "s1", "git merge feat"), F.command(2, "s1", "git rebase main")]), now: F.t0)
+        #expect(sim.pulses.map(\.milestone) == [.merge, .rebase])
+        #expect(sim.ripples.isEmpty && sim.tints[a]?.strength == Constants.tintWrite && sim.avatars[s1]?.badge == nil)
+    }
 }

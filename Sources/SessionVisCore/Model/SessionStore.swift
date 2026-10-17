@@ -17,6 +17,8 @@ public actor SessionStore {
         var endedAt: Date?
         var retired = false
         var touchCount = 0
+        var lastCommandLabel: String?
+        var lastMilestone: Milestone?
         var metaToolUseId: String?
         /// Ended by its own hand-back/turn end or by a task notification: only a resume (new user prompt) revives it.
         var stickyEnd = false
@@ -36,6 +38,9 @@ public actor SessionStore {
     private var subagentByToolUseId: [String: AgentID] = [:]  // meta.toolUseId → subagent
     private var touches: [Touch] = []
     private var nextSeq: UInt64 = 1
+    private var commands: [CommandEvent] = []
+    private var nextCommandSeq: UInt64 = 1
+    private var pendingCommits: [String: UInt64] = [:]   // tool_use id of a `git commit` → command seq
     private var nextHue = 0
     private var hookEventsSeenAt: Date?
     private var skippedLines = 0
@@ -174,7 +179,7 @@ public actor SessionStore {
             rec.branch = branch
         case .userPrompt(let text):
             if rec.firstPrompt == nil { rec.firstPrompt = text }
-        case .toolUse(let toolId, let name, let filePath, _, _):
+        case .toolUse(let toolId, let name, let filePath, let description, _, let command):
             toolUseOwner[toolId] = id
             if let child = subagentByToolUseId[toolId], var childRec = agents[child], child != id {
                 if case .subagent(_, let d, let at, let m) = childRec.kind {
@@ -192,8 +197,29 @@ public actor SessionStore {
                     if touches.count > Constants.recentTouchLimit { touches.removeFirst(touches.count - Constants.recentTouchLimit) }
                 }
             }
-        case .toolResult(let toolId):
+            if name == "Bash", let command {
+                // A chain with several git milestones records each one, in order; otherwise the whole command is one event.
+                let milestones = CommandClassifier.milestoneSegments(command)
+                let parts = milestones.count > 1 ? milestones : [command]
+                for (i, part) in parts.enumerated() {
+                    let cls = CommandClassifier.classify(part)
+                    let event = CommandEvent(seq: nextCommandSeq, agent: id, at: t, commandClass: cls,
+                                             label: CommandClassifier.label(command: part, description: i == 0 ? description : nil),
+                                             command: part, hueIndex: rec.hueIndex)
+                    if cls == .git(.commit) { pendingCommits[toolId] = event.seq }
+                    nextCommandSeq += 1
+                    commands.append(event)
+                    rec.lastCommandLabel = event.label
+                    if let m = event.milestone { rec.lastMilestone = m }
+                }
+                if commands.count > Constants.recentCommandLimit { commands.removeFirst(commands.count - Constants.recentCommandLimit) }
+            }
+        case .toolResult(let toolId, let text):
             if let child = subagentByToolUseId[toolId] { endAgent(child, at: t) }
+            if let seq = pendingCommits.removeValue(forKey: toolId), let info = text.flatMap(CommandClassifier.parseCommit) {
+                if let i = commands.firstIndex(where: { $0.seq == seq }) { commands[i].commit = info }
+                if rec.lastMilestone == .commit(nil) { rec.lastMilestone = .commit(info) }
+            }
         case .assistantText, .turnEnded, .interrupted, .taskNotification:
             break
         }
@@ -205,7 +231,7 @@ public actor SessionStore {
         }
         guard active, case .subagent = rec.kind else { return }
         if line.event == .turnEnded, rec.machine.pending.isEmpty { endAgent(id, at: t, sticky: true) }
-        if case .toolUse(_, let name, _, _, _) = line.event, name == "SubagentHandback" { endAgent(id, at: t, sticky: true) }
+        if case .toolUse(_, let name, _, _, _, _) = line.event, name == "SubagentHandback" { endAgent(id, at: t, sticky: true) }
         if line.event == .interrupted { endAgent(id, at: t, sticky: true) }
     }
 
@@ -289,9 +315,10 @@ public actor SessionStore {
             .map { r in
                 AgentSnapshot(id: r.id, kind: r.kind, title: r.title, status: r.machine.status, hueIndex: r.hueIndex,
                               branch: r.branch, worktree: r.worktree, firstSeen: r.firstSeen,
-                              lastActivity: r.machine.lastActivity, endedAt: r.endedAt, touchCount: r.touchCount)
+                              lastActivity: r.machine.lastActivity, endedAt: r.endedAt, touchCount: r.touchCount,
+                              lastCommandLabel: r.lastCommandLabel, lastMilestone: r.lastMilestone)
             }
-        return StoreSnapshot(agents: list, recentTouches: touches, hookEventsSeenAt: hookEventsSeenAt, skippedLines: skippedLines)
+        return StoreSnapshot(agents: list, recentTouches: touches, recentCommands: commands, hookEventsSeenAt: hookEventsSeenAt, skippedLines: skippedLines)
     }
 
     // MARK: - Helpers

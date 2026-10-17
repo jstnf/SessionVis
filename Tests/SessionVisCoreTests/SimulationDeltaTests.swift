@@ -195,4 +195,117 @@ import Testing
         #expect(sim.tree.node(dest) == nil && sim.edgeTints[dest] == nil)
         #expect(sim.edgeTint(dirA)?.strength == Constants.tintWrite)        // A still has files, its edge keeps fading on its own
     }
+
+    func ghostTree() -> FileTree {
+        var t = F.tree()
+        t.insert(file: RepoPath(string: "A/ghost.swift"), origin: .worktree("wt"))
+        return t
+    }
+    let g = RepoPath(string: "A/ghost.swift")
+
+    @Test func mainDeltaDoesNotKillWorktreeFilesAndWorktreeDeltaDoesNotKillMainFiles() {
+        var sim = Simulation(tree: ghostTree())
+        sim.rootPath = "/nonexistent-\(UUID().uuidString)"
+        sim.apply(delta: TreeDelta(added: [], origin: .main, snapshot: [a, b, c]), now: F.t0)
+        #expect(sim.deathAlpha(g) == nil && sim.tree.isGhost(g))
+        sim.apply(delta: TreeDelta(added: [], origin: .worktree("wt"), snapshot: [g]), now: F.t0)
+        #expect(sim.deathAlpha(a) == nil && sim.deathAlpha(g) == nil)
+    }
+
+    @Test func ghostLandsWhenMainAddsIt() {
+        var sim = Simulation(tree: ghostTree())
+        sim.apply(delta: TreeDelta(added: [g], origin: .main), now: F.t0)
+        #expect(!sim.tree.isGhost(g))
+        #expect(sim.isLanding(g) && sim.birthScale(g) == 0)
+        sim.update(dt: Constants.birthDuration + 0.1, now: F.t0)
+        #expect(!sim.isLanding(g) && sim.birthScale(g) == 1)
+        // An ordinary new file is born but not landing.
+        let n = RepoPath(string: "B/new.swift")
+        sim.apply(delta: TreeDelta(added: [n], origin: .main), now: F.t0)
+        #expect(sim.birthScale(n) == 0 && !sim.isLanding(n))
+    }
+
+    @Test func removingMainTurnsSharedFileIntoGhostWithoutDeath() {
+        var tree = F.tree()
+        tree.insert(file: a, origin: .worktree("wt"))
+        var sim = Simulation(tree: tree)
+        sim.apply(delta: TreeDelta(removed: [a], origin: .main), now: F.t0)
+        #expect(sim.deathAlpha(a) == nil && sim.tree.isGhost(a))
+        sim.apply(delta: TreeDelta(removed: [a], origin: .worktree("wt")), now: F.t0)
+        #expect(sim.deathAlpha(a) == 1)
+    }
+
+    @Test func removedWorktreeKillsItsGhostsAndCleansTheirEffects() {
+        var sim = Simulation(tree: ghostTree())
+        sim.apply(snapshot: StoreSnapshot(agents: [F.agent("s1")]), now: F.t0)
+        sim.apply(snapshot: StoreSnapshot(agents: [F.agent("s1")], recentTouches: [
+            Touch(seq: 1, agent: AgentID("s1"), path: g, worktree: "wt", kind: .write, at: F.t0)]), now: F.t0)
+        #expect(sim.tints[g] != nil && sim.edgeTints[g] != nil)
+        sim.apply(delta: TreeDelta(removed: [g], origin: .worktree("wt"), snapshot: []), now: F.t0)
+        #expect(sim.deathAlpha(g) == 1)
+        sim.update(dt: Constants.deathDuration + 0.1, now: F.t0)
+        #expect(sim.tree.node(g) == nil && sim.position(of: g) == nil)
+        #expect(sim.tints[g] == nil && sim.edgeTints[g] == nil && sim.heat[g] == nil && !sim.touchedPaths.contains(g))
+    }
+
+    @Test func worktreeTouchInsertsGhostAndSurvivesMainSnapshot() {
+        var sim = Simulation(tree: F.tree())
+        sim.rootPath = "/nonexistent-\(UUID().uuidString)"
+        sim.apply(snapshot: StoreSnapshot(agents: [F.agent("s1")]), now: F.t0)
+        let p = RepoPath(string: "A/fresh.swift")
+        sim.apply(snapshot: StoreSnapshot(agents: [F.agent("s1")], recentTouches: [
+            Touch(seq: 1, agent: AgentID("s1"), path: p, worktree: "wt", kind: .write, at: F.t0)]), now: F.t0)
+        #expect(sim.tree.isGhost(p) && sim.position(of: p) != nil)
+        sim.apply(delta: TreeDelta(origin: .main, snapshot: [a, b, c]), now: F.t0)
+        #expect(sim.deathAlpha(p) == nil)                                     // main's snapshot says nothing about worktree files
+        sim.apply(delta: TreeDelta(origin: .worktree("wt"), snapshot: []), now: F.t0)
+        #expect(sim.deathAlpha(p) == 1)                                       // the worktree's own snapshot does, and it is not on disk
+        // A worktree touch on a file that exists in main neither duplicates it nor makes it a ghost.
+        sim.apply(snapshot: StoreSnapshot(agents: [F.agent("s1")], recentTouches: [
+            Touch(seq: 2, agent: AgentID("s1"), path: a, worktree: "wt", kind: .read, at: F.t0)]), now: F.t0)
+        #expect(!sim.tree.isGhost(a) && sim.tree.fileCount == 4)
+    }
+    @Test func worktreeDeltaNeverDisplacesMainOnAFileDirectoryClash() {
+        let shared = RepoPath(string: "Sources/Shared"), inner = RepoPath(string: "Sources/Shared/inner.swift")
+        let other = RepoPath(string: "Sources/Other.swift"), dir = RepoPath(string: "Sources")
+        var sim = Simulation(tree: FileTree(files: [shared, other]))
+        sim.apply(delta: TreeDelta(added: [inner], origin: .worktree("wt")), now: F.t0)
+        #expect(sim.tree.node(shared)?.isDirectory == false && sim.tree.node(shared)?.origins == [.main])
+        #expect(sim.tree.node(inner) == nil && sim.birthScale(inner) == 1)
+        #expect(sim.tree.fileCount == 2 && sim.dying.isEmpty)
+        // A worktree file where main has a directory leaves the directory and everything under it.
+        sim.apply(delta: TreeDelta(added: [dir], origin: .worktree("wt")), now: F.t0)
+        #expect(sim.tree.node(dir)?.isDirectory == true)
+        #expect(sim.tree.node(shared) != nil && sim.tree.node(other) != nil && sim.tree.fileCount == 2 && sim.dying.isEmpty)
+        // The same clash arriving as a worktree move is not drawn either.
+        var tree = FileTree(files: [shared, other])
+        tree.insert(file: RepoPath(string: "W/w.swift"), origin: .worktree("wt"))
+        var moved = Simulation(tree: tree)
+        moved.apply(delta: TreeDelta(moved: [TreeDelta.Move(from: RepoPath(string: "W/w.swift"), to: inner)], origin: .worktree("wt")), now: F.t0)
+        #expect(moved.tree.node(shared)?.isDirectory == false && moved.tree.node(inner) == nil && moved.tree.fileCount == 2)
+    }
+
+    @Test func worktreeMoveOfASharedFileLeavesMainsCopyAndAddsAGhost() {
+        var tree = F.tree()
+        tree.insert(file: a, origin: .worktree("wt"))
+        var sim = Simulation(tree: tree)
+        sim.apply(snapshot: StoreSnapshot(agents: [F.agent("s1")], recentTouches: [F.touch(1, "s1", "A/a.swift")]), now: F.t0)
+        let pos = sim.position(of: a)!, tint = sim.tints[a]
+        let dest = RepoPath(string: "A/moved.swift")
+        sim.apply(delta: TreeDelta(moved: [TreeDelta.Move(from: a, to: dest)], origin: .worktree("wt")), now: F.t0)
+        #expect(sim.tree.node(a)?.origins == [.main] && !sim.tree.isGhost(a))
+        #expect(sim.position(of: a) == pos && sim.tints[a] == tint && sim.deathAlpha(a) == nil)
+        #expect(sim.tree.isGhost(dest) && sim.birthScale(dest) == 0 && sim.tints[dest] == nil)
+    }
+
+    @Test func mainMoveOfASharedFileLeavesTheWorktreeGhostAndBearsAMainFile() {
+        var tree = F.tree()
+        tree.insert(file: a, origin: .worktree("wt"))
+        var sim = Simulation(tree: tree)
+        let pos = sim.position(of: a)!
+        let dest = RepoPath(string: "A/moved.swift")
+        sim.apply(delta: TreeDelta(moved: [TreeDelta.Move(from: a, to: dest)], origin: .main), now: F.t0)
+        #expect(sim.tree.isGhost(a) && sim.position(of: a) == pos && sim.deathAlpha(a) == nil)
+        #expect(sim.tree.node(dest)?.origins == [.main] && sim.birthScale(dest) == 0)
+    }
 }

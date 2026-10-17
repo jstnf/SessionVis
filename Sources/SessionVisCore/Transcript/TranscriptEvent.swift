@@ -6,8 +6,8 @@ public enum TranscriptEvent: Equatable, Sendable {
     case relocated(cwd: String)
     case worktree(name: String, branch: String, path: String)
     case userPrompt(text: String)
-    case toolUse(id: String, name: String, filePath: String?, description: String?, question: String?)
-    case toolResult(toolUseId: String)
+    case toolUse(id: String, name: String, filePath: String?, description: String?, question: String?, command: String? = nil)
+    case toolResult(toolUseId: String, text: String? = nil)
     case assistantText(text: String, endOfTurn: Bool)
     case turnEnded
     /// The user pressed Esc: `[Request interrupted by user…]`.

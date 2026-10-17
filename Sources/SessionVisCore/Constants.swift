@@ -33,4 +33,23 @@ public enum Constants {
     public static let edgeWidth: CGFloat = 0.5
     /// Width of a lit edge at full tint strength; it eases back to `edgeWidth` as the tint fades.
     public static let litEdgeWidth: CGFloat = 1.2
+    /// Ghost files (present only in a worktree) draw as rings on dashed edges.
+    public static let ghostRingRadius: CGFloat = 3.4
+    public static let ghostRingWidth: CGFloat = 1.0
+    public static let ghostDash: [CGFloat] = [3, 2.5]
+
+    /// Bash command text kept per tool call, and tool-result text kept for commit parsing.
+    public static let commandTextLimit = 400
+    public static let toolResultTextLimit = 4096
+    public static let recentCommandLimit = 100
+
+    /// Command pulses on an orb and their labels.
+    public static let pulseDuration: TimeInterval = 1.0
+    public static let pulseRadius: CGFloat = 44
+    public static let pulseLabelDuration: TimeInterval = 2.2
+    /// Commit milestone: a ripple along the agent's lit edges, then its file tints drop to this floor.
+    public static let rippleDuration: TimeInterval = 1.2
+    public static let committedTintFloor: CGFloat = 0.35
+    /// A push lifts the commit badge off the orb over this long.
+    public static let badgeLiftDuration: TimeInterval = 0.9
 }

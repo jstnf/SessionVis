@@ -95,6 +95,12 @@ private struct SessionRow: View {
                     Text(agent.title).font(.system(size: 11, design: .monospaced)).foregroundStyle(Palette.text).lineLimit(1).truncationMode(.tail)
                 }
                 Text(statusLine).font(.system(size: 10, design: .monospaced)).foregroundStyle(Palette.status(agent.status))
+                if case .working = agent.status, let cmd = agent.lastCommandLabel {
+                    Text("$ \(cmd)").font(.system(size: 10, design: .monospaced)).foregroundStyle(Palette.textSecondary).lineLimit(1).truncationMode(.tail)
+                }
+                if let m = agent.lastMilestone {
+                    Text(m.line).font(.system(size: 10, design: .monospaced)).foregroundStyle(Palette.text).lineLimit(1).truncationMode(.tail)
+                }
                 if case .waiting(let preview) = agent.status {
                     Text(preview).font(.system(size: 10, design: .monospaced)).foregroundStyle(Palette.textSecondary).lineLimit(2)
                 }
@@ -124,9 +130,15 @@ private struct SubagentRow: View {
         HStack(spacing: 5) {
             Rectangle().fill(Palette.edge).frame(width: 1).padding(.leading, 12)
             Circle().fill(Palette.tint(agent.hueIndex)).frame(width: 6, height: 6)
-            Text(agent.title).font(.system(size: 10, design: .monospaced)).foregroundStyle(Palette.textSecondary).lineLimit(1).truncationMode(.tail)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(agent.title).font(.system(size: 10, design: .monospaced)).foregroundStyle(Palette.textSecondary).lineLimit(1).truncationMode(.tail)
+                if let milestone = agent.lastMilestone {
+                    Text(milestone.line).font(.system(size: 9, design: .monospaced)).foregroundStyle(Palette.textSecondary)
+                        .lineLimit(1).truncationMode(.tail)
+                }
+            }
             Spacer(minLength: 4)
-            Text(agent.status.word).font(.system(size: 9, design: .monospaced)).foregroundStyle(Palette.status(agent.status))
+            Text(agent.status.word).font(.system(size: 9, design: .monospaced)).foregroundStyle(Palette.status(agent.status)).lineLimit(1)
         }
         .padding(.vertical, 2).padding(.trailing, 6)
         .background(selected ? Palette.rowHighlight : .clear, in: RoundedRectangle(cornerRadius: 4))

@@ -68,11 +68,14 @@ public struct AgentSnapshot: Equatable, Sendable, Identifiable {
     public let lastActivity: Date
     public let endedAt: Date?
     public let touchCount: Int
+    public let lastCommandLabel: String?
+    public let lastMilestone: Milestone?
 
-    public init(id: AgentID, kind: AgentKind, title: String, status: Status, hueIndex: Int, branch: String?, worktree: String?, firstSeen: Date, lastActivity: Date, endedAt: Date?, touchCount: Int) {
+    public init(id: AgentID, kind: AgentKind, title: String, status: Status, hueIndex: Int, branch: String?, worktree: String?, firstSeen: Date, lastActivity: Date, endedAt: Date?, touchCount: Int, lastCommandLabel: String? = nil, lastMilestone: Milestone? = nil) {
         self.id = id; self.kind = kind; self.title = title; self.status = status; self.hueIndex = hueIndex
         self.branch = branch; self.worktree = worktree; self.firstSeen = firstSeen; self.lastActivity = lastActivity
         self.endedAt = endedAt; self.touchCount = touchCount
+        self.lastCommandLabel = lastCommandLabel; self.lastMilestone = lastMilestone
     }
 
     public var isSubagent: Bool { if case .subagent = kind { return true } else { return false } }
@@ -82,11 +85,13 @@ public struct AgentSnapshot: Equatable, Sendable, Identifiable {
 public struct StoreSnapshot: Equatable, Sendable {
     public var agents: [AgentSnapshot]
     public var recentTouches: [Touch]
+    public var recentCommands: [CommandEvent]
     public var hookEventsSeenAt: Date?
     public var skippedLines: Int
 
-    public init(agents: [AgentSnapshot] = [], recentTouches: [Touch] = [], hookEventsSeenAt: Date? = nil, skippedLines: Int = 0) {
-        self.agents = agents; self.recentTouches = recentTouches; self.hookEventsSeenAt = hookEventsSeenAt; self.skippedLines = skippedLines
+    public init(agents: [AgentSnapshot] = [], recentTouches: [Touch] = [], recentCommands: [CommandEvent] = [], hookEventsSeenAt: Date? = nil, skippedLines: Int = 0) {
+        self.agents = agents; self.recentTouches = recentTouches; self.recentCommands = recentCommands
+        self.hookEventsSeenAt = hookEventsSeenAt; self.skippedLines = skippedLines
     }
     public static let empty = StoreSnapshot()
 }

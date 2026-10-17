@@ -335,4 +335,81 @@ final class TestClock: @unchecked Sendable {
         #expect(a?.status == .ended && a?.endedAt != nil)
         #expect(a?.touchCount == 1)                                                               // its history still counted (I-1)
     }
+
+    func bash(_ command: String, id: String = "b1", description: String? = nil, at: TimeInterval = 0, agent: String? = nil) -> SourceEvent {
+        line(.toolUse(id: id, name: "Bash", filePath: nil, description: description, question: nil, command: command), at: at, agent: agent)
+    }
+
+    @Test func bashCallsBecomeCommandEventsWithLabelsAndClasses() async {
+        let store = SessionStore(folder: folder, clock: TestClock().read)
+        await store.apply(.sessionAppeared(sessionId: "s1", transcriptURL: url))
+        await store.apply(bash("cd /repo && swift test --filter X", id: "b1", description: "Run store tests", at: 1))
+        await store.apply(bash("git push origin main", id: "b2", at: 2))
+        await store.apply(edit("/repo/A.swift", id: "e1", at: 3))                              // not a command
+        let snap = await store.snapshot()
+        let cmds = snap.recentCommands
+        #expect(cmds.map(\.seq) == [1, 2])
+        #expect(cmds[0].agent == AgentID("s1") && cmds[0].commandClass == .test && cmds[0].label == "Run store tests")
+        #expect(cmds[0].command == "cd /repo && swift test --filter X" && cmds[0].at == t0.addingTimeInterval(1))
+        #expect(cmds[1].commandClass == .git(.push) && cmds[1].label == "git push" && cmds[1].milestone == .push)
+        #expect(cmds[0].hueIndex == snap.agents[0].hueIndex)
+        #expect(snap.agents[0].lastCommandLabel == "git push")
+        #expect(snap.agents[0].lastMilestone == .push)
+        #expect(snap.agents[0].status == .working)
+    }
+
+    @Test func commitInfoArrivesWithTheToolResult() async {
+        let store = SessionStore(folder: folder, clock: TestClock().read)
+        await store.apply(.sessionAppeared(sessionId: "s1", transcriptURL: url))
+        await store.apply(bash("git commit -m 'Add thing'", id: "c1", at: 1))
+        var snap = await store.snapshot()
+        #expect(snap.recentCommands[0].commit == nil && snap.recentCommands[0].milestone == .commit(nil))
+        #expect(snap.agents[0].lastMilestone == .commit(nil))
+        await store.apply(line(.toolResult(toolUseId: "c1", text: "[main a1b2c3d] Add thing\n 1 file changed"), at: 2))
+        snap = await store.snapshot()
+        let info = CommitInfo(hash: "a1b2c3d", branch: "main", message: "Add thing")
+        #expect(snap.recentCommands[0].commit == info)
+        #expect(snap.agents[0].lastMilestone == .commit(info))
+        // A result for a non-commit, or without the commit line, leaves things alone.
+        await store.apply(bash("git commit -m again", id: "c2", at: 3))
+        await store.apply(line(.toolResult(toolUseId: "c2", text: "nothing to commit"), at: 4))
+        snap = await store.snapshot()
+        #expect(snap.recentCommands[1].commit == nil && snap.agents[0].lastMilestone == .commit(nil))
+    }
+
+    @Test func chainWithSeveralMilestonesRecordsEachInOrder() async {
+        let store = SessionStore(folder: folder, clock: TestClock().read)
+        await store.apply(.sessionAppeared(sessionId: "s1", transcriptURL: url))
+        await store.apply(bash("git commit -m x && git push origin main", id: "c1", description: "Commit and push", at: 1))
+        var snap = await store.snapshot()
+        let cmds = snap.recentCommands
+        #expect(cmds.map(\.commandClass) == [.git(.commit), .git(.push)])
+        #expect(cmds.count == 2 && cmds[1].seq == cmds[0].seq + 1)
+        #expect(cmds[0].label == "Commit and push" && cmds[1].label == "git push")      // a description goes on the first only
+        #expect(cmds[0].command == "git commit -m x" && cmds[1].command == "git push origin main")
+        #expect(snap.agents[0].lastCommandLabel == "git push" && snap.agents[0].lastMilestone == .push)
+        await store.apply(line(.toolResult(toolUseId: "c1", text: "[main a1b2c3d] x\n 1 file changed"), at: 2))
+        snap = await store.snapshot()
+        #expect(snap.recentCommands[0].commit == CommitInfo(hash: "a1b2c3d", branch: "main", message: "x"))
+        #expect(snap.recentCommands[1].commit == nil && snap.agents[0].lastMilestone == .push)
+        // Without a description each event is labelled from its own segment.
+        await store.apply(bash("git commit -m y && git push", id: "c2", at: 3))
+        snap = await store.snapshot()
+        #expect(snap.recentCommands.suffix(2).map(\.label) == ["git commit", "git push"])
+    }
+
+    @Test func commandBufferIsCappedAndSubagentCommandsBelongToThem() async {
+        let store = SessionStore(folder: folder, clock: TestClock().read)
+        await store.apply(.sessionAppeared(sessionId: "s1", transcriptURL: url))
+        await store.apply(.subagentAppeared(sessionId: "s1", agentId: "A", meta: SubagentMeta(description: "sub", agentType: "general-purpose")))
+        for i in 0..<(Constants.recentCommandLimit + 5) {
+            await store.apply(bash("ls \(i)", id: "x\(i)", at: TimeInterval(i), agent: "A"))
+        }
+        let snap = await store.snapshot()
+        #expect(snap.recentCommands.count == Constants.recentCommandLimit)
+        #expect(snap.recentCommands.first?.seq == 6 && snap.recentCommands.last?.seq == UInt64(Constants.recentCommandLimit + 5))
+        #expect(snap.recentCommands.allSatisfy { $0.agent == AgentID("A") })
+        #expect(snap.agents.first { $0.id == AgentID("A") }?.lastCommandLabel == "ls \(Constants.recentCommandLimit + 4)")
+        #expect(snap.agents.first { $0.id == AgentID("s1") }?.lastCommandLabel == nil)
+    }
 }

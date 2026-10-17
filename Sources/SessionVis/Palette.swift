@@ -11,6 +11,7 @@ extension Color {
 /// Spec colours (Global Constraints).
 enum Palette {
     static let background = Color(hex: 0x0E1117)
+    static let ghost = Color(hex: 0x6E788C)
     static let danger = Color(hex: 0xF0605A)
     static let edgeRGB = HuePalette.rgb(0x2A3140)
     static let edge = Color(rgb: edgeRGB)

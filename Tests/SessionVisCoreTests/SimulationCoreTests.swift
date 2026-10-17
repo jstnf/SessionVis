@@ -14,6 +14,10 @@ enum SimFixtures {
     static func touch(_ seq: UInt64, _ agent: String, _ path: String, kind: TouchKind = .write, at: Date = t0, hue: Int = 0, title: String? = nil) -> Touch {
         Touch(seq: seq, agent: AgentID(agent), path: RepoPath(string: path), worktree: nil, kind: kind, at: at, hueIndex: hue, agentTitle: title)
     }
+    static func command(_ seq: UInt64, _ agent: String, _ command: String, label: String? = nil, at: Date = t0, hue: Int = 0, commit: CommitInfo? = nil) -> CommandEvent {
+        CommandEvent(seq: seq, agent: AgentID(agent), at: at, commandClass: CommandClassifier.classify(command),
+                     label: label ?? CommandClassifier.label(command: command, description: nil), command: command, commit: commit, hueIndex: hue)
+    }
 }
 
 @Suite struct SimulationCoreTests {

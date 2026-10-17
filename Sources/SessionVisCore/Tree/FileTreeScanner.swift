@@ -1,17 +1,65 @@
 import Foundation
 
+/// The files of the main checkout and of each `.claude/worktrees/<name>` checkout, plus the merged tree.
+public struct ScanResult: Sendable {
+    public var files: [Origin: Set<RepoPath>]
+    public var truncated: Bool
+    public var tree: FileTree
+}
+
 /// Seeds the tree from the repository: git-tracked files when available, otherwise a directory walk, capped at `maxTreeFiles`.
 public enum FileTreeScanner {
     static let skippedDirectoryNames: Set<String> = [".git", ".build", ".swiftpm", "node_modules", "DerivedData", "Pods", "dist"]
-    static let worktreesPrefix = ".claude/worktrees"
+    static let worktreesPrefix = Origin.worktreesComponent
 
-    public static func scan(directory: String) -> FileTree {
-        if let files = gitFiles(directory: directory) {
-            let truncated = files.count > Constants.maxTreeFiles
-            return FileTree(files: files.prefix(Constants.maxTreeFiles).map(RepoPath.init(string:)), truncated: truncated)
+    public static func scan(directory: String) -> FileTree { scanOrigins(directory: directory).tree }
+
+    /// Lists main first, then each worktree by name; `limit` caps the distinct paths across all of them. A path an
+    /// earlier checkout already listed costs nothing, so a worktree's copies of main's files are always kept; once the
+    /// cap is reached a worktree keeps only those and loses its other paths. Every path not listed earlier counts,
+    /// including one that collides with a main file or directory: such paths are dropped later, when the tree is merged.
+    public static func scanOrigins(directory: String, limit: Int = Constants.maxTreeFiles) -> ScanResult {
+        var files: [Origin: Set<RepoPath>] = [:]
+        var truncated = false
+        var seen = Set<RepoPath>()
+        var origins: [Origin] = [.main]
+        origins += worktreeNames(directory: directory).map(Origin.worktree)
+        for origin in origins {
+            let (list, cut) = listFiles(directory: origin.rootPath(under: directory), limit: limit)
+            if cut { truncated = true }
+            var kept = Set<RepoPath>()
+            for path in list.map(RepoPath.init(string:)) {
+                if !seen.contains(path) {
+                    guard seen.count < limit else { truncated = true; continue }
+                    seen.insert(path)
+                }
+                kept.insert(path)
+            }
+            files[origin] = kept
         }
-        let (files, truncated) = walkFiles(directory: directory, limit: Constants.maxTreeFiles)
-        return FileTree(files: files.map(RepoPath.init(string:)), truncated: truncated)
+        var tree = FileTree(files: Array(files[.main] ?? []), truncated: truncated)
+        for origin in origins.dropFirst() {
+            for f in (files[origin] ?? []).sorted() { tree.insert(file: f, origin: origin) }
+        }
+        return ScanResult(files: files, truncated: truncated, tree: tree)
+    }
+
+    /// Directory names directly under `<directory>/.claude/worktrees`, sorted.
+    public static func worktreeNames(directory: String) -> [String] {
+        let dir = Origin.worktreesDirectory(under: directory)
+        guard let entries = try? FileManager.default.contentsOfDirectory(atPath: dir) else { return [] }
+        return entries.filter { name in
+            var isDir: ObjCBool = false
+            return !name.hasPrefix(".") && FileManager.default.fileExists(atPath: dir + "/" + name, isDirectory: &isDir) && isDir.boolValue
+        }.sorted()
+    }
+
+    /// Git listing when the directory is a work tree, else a walk; at most `limit` entries, with a flag when cut.
+    static func listFiles(directory: String, limit: Int) -> (files: [String], truncated: Bool) {
+        if let files = gitFiles(directory: directory) {
+            return (Array(files.prefix(limit)), files.count > limit)
+        }
+        return walkFiles(directory: directory, limit: limit)
     }
 
     /// Tracked + untracked-not-ignored paths relative to `directory`, or nil when not a git work tree.

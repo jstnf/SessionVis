@@ -9,7 +9,7 @@ public final class RepoWatcher: @unchecked Sendable {
     private let latency: TimeInterval
     private let queue = DispatchQueue(label: "SessionVis.RepoWatcher")
     private var stream: FSEventStreamRef?
-    private var known: Set<RepoPath>
+    private var known: [Origin: Set<RepoPath>]
     private var finished = false
     private var _lastScanTruncated = false
     /// Whether the most recent rescan hit the file cap.
@@ -18,7 +18,7 @@ public final class RepoWatcher: @unchecked Sendable {
     public init(directory: String, initial: FileTree, latency: TimeInterval = Constants.watchDebounce) {
         self.directory = PathFolder.normalize(directory)
         self.latency = latency
-        self.known = initial.files
+        self.known = initial.filesByOrigin
         (deltas, continuation) = AsyncStream<TreeDelta>.makeStream()
     }
 
@@ -45,22 +45,30 @@ public final class RepoWatcher: @unchecked Sendable {
 
     private func rescanLocked() {
         guard !finished else { return }
-        let scan = FileTreeScanner.scan(directory: directory)
+        let scan = FileTreeScanner.scanOrigins(directory: directory)
         _lastScanTruncated = scan.truncated
-        var files = scan.files
-        var delta = TreeDelta.compute(old: known, new: files)
-        if scan.truncated, !delta.isEmpty {
-            // A capped scan can miss files that still exist; do not report those as deleted.
-            let root = directory
-            let filtered = delta.droppingPhantomRemovals { FileManager.default.fileExists(atPath: root + "/" + $0.string) }
-            let before = Set(delta.removed + delta.moved.map(\.from))
-            let after = Set(filtered.removed + filtered.moved.map(\.from))
-            files.formUnion(before.subtracting(after))
-            delta = filtered
+        var next = scan.files
+        let origins = Set(known.keys).union(next.keys).sorted()
+        var deltas: [TreeDelta] = []
+        for origin in origins {
+            var files = next[origin] ?? []
+            var delta = TreeDelta.compute(old: known[origin] ?? [], new: files)
+            if scan.truncated, !delta.isEmpty {
+                // A capped scan can miss files that still exist; do not report those as deleted.
+                let root = origin.rootPath(under: directory)
+                let filtered = delta.droppingPhantomRemovals { FileManager.default.fileExists(atPath: root + "/" + $0.string) }
+                let before = Set(delta.removed + delta.moved.map(\.from))
+                let after = Set(filtered.removed + filtered.moved.map(\.from))
+                files.formUnion(before.subtracting(after))
+                delta = filtered
+            }
+            delta.origin = origin
+            delta.snapshot = files
+            if files.isEmpty { next.removeValue(forKey: origin) } else { next[origin] = files }
+            if !delta.isEmpty { deltas.append(delta) }
         }
-        known = files
-        delta.snapshot = files
-        if !delta.isEmpty { continuation.yield(delta) }
+        known = next
+        for d in deltas { continuation.yield(d) }
     }
 
     public func stop() {

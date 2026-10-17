@@ -28,11 +28,11 @@ public struct StatusMachine: Equatable, Sendable {
         case .userPrompt:
             pending.removeAll()
             set(.working, at: t)
-        case .toolUse(let id, let name, _, _, let question):
+        case .toolUse(let id, let name, _, _, let question, _):
             pending.append(PendingTool(id: id, name: name, question: question))
             if name == "AskUserQuestion" { set(.waiting(preview: question ?? "Question"), at: t) }
             else { set(.working, at: t) }
-        case .toolResult(let id):
+        case .toolResult(let id, _):
             pending.removeAll { $0.id == id }
             if let q = pending.first(where: { $0.name == "AskUserQuestion" }) {
                 set(.waiting(preview: q.question ?? "Question"), at: t)

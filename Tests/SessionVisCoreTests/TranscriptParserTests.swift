@@ -56,7 +56,7 @@ import Testing
 
     @Test func toolResultBlocksEmitResultsAndNoPrompt() throws {
         let line = #"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"ok"},{"type":"tool_result","tool_use_id":"toolu_2","content":[{"type":"text","text":"x"}]}]},"timestamp":"2026-09-08T01:42:05.584Z","cwd":"/repo","toolUseResult":{"success":true}}"#
-        #expect(try events(line) == [.toolResult(toolUseId: "toolu_1"), .toolResult(toolUseId: "toolu_2")])
+        #expect(try events(line) == [.toolResult(toolUseId: "toolu_1", text: "ok"), .toolResult(toolUseId: "toolu_2", text: "x")])
     }
 
     @Test func toolUseFilePathsPerTool() throws {
@@ -66,7 +66,7 @@ import Testing
         #expect(try events(use("Edit", #"{"file_path":"/repo/A.swift","old_string":"a","new_string":"b"}"#)) == [.toolUse(id: "toolu_9", name: "Edit", filePath: "/repo/A.swift", description: nil, question: nil)])
         #expect(try events(use("Read", #"{"file_path":"/repo/B.swift"}"#)) == [.toolUse(id: "toolu_9", name: "Read", filePath: "/repo/B.swift", description: nil, question: nil)])
         #expect(try events(use("NotebookEdit", #"{"notebook_path":"/repo/n.ipynb","new_source":""}"#)) == [.toolUse(id: "toolu_9", name: "NotebookEdit", filePath: "/repo/n.ipynb", description: nil, question: nil)])
-        #expect(try events(use("Bash", #"{"command":"ls"}"#)) == [.toolUse(id: "toolu_9", name: "Bash", filePath: nil, description: nil, question: nil)])
+        #expect(try events(use("Bash", #"{"command":"ls","description":"List files"}"#)) == [.toolUse(id: "toolu_9", name: "Bash", filePath: nil, description: "List files", question: nil, command: "ls")])
         #expect(try events(use("Agent", #"{"description":"Research hitches","prompt":"..."}"#)) == [.toolUse(id: "toolu_9", name: "Agent", filePath: nil, description: "Research hitches", question: nil)])
         #expect(try events(use("AskUserQuestion", #"{"questions":[{"question":"Which layout?","header":"Layout","options":[]}]}"#)) == [.toolUse(id: "toolu_9", name: "AskUserQuestion", filePath: nil, description: nil, question: "Which layout?")])
     }
@@ -115,5 +115,25 @@ import Testing
         #expect(try events(removed) == [])
         let prompt = #"{"type":"queue-operation","operation":"enqueue","timestamp":"2026-10-07T04:39:50.284Z","sessionId":"s1","content":"please also fix the tests"}"#
         #expect(try events(prompt) == [])
+    }
+
+    @Test func bashCommandIsCappedAndOtherToolsCarryNone() throws {
+        let long = String(repeating: "x", count: Constants.commandTextLimit + 50)
+        let line = #"{"type":"assistant","message":{"id":"m1","role":"assistant","stop_reason":"tool_use","content":[{"type":"tool_use","id":"t","name":"Bash","input":{"command":"\#(long)"}}]}}"#
+        guard case .toolUse(_, _, _, _, _, let command) = try #require(try events(line).first) else { Issue.record("not a toolUse"); return }
+        #expect(command?.count == Constants.commandTextLimit)
+        let edit = #"{"type":"assistant","message":{"id":"m1","role":"assistant","stop_reason":"tool_use","content":[{"type":"tool_use","id":"t","name":"Edit","input":{"file_path":"/repo/A.swift","command":"ignored"}}]}}"#
+        #expect(try events(edit) == [.toolUse(id: "t", name: "Edit", filePath: "/repo/A.swift", description: nil, question: nil, command: nil)])
+    }
+
+    @Test func toolResultTextJoinsBlocksCapsAndDropsEmpty() throws {
+        let blocks = #"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"a","content":[{"type":"text","text":"[main a1b2c3d] msg"},{"type":"image","source":{}},{"type":"text","text":" 1 file changed"}]}]}}"#
+        #expect(try events(blocks) == [.toolResult(toolUseId: "a", text: "[main a1b2c3d] msg\n 1 file changed")])
+        let empty = #"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"b","content":""}]}}"#
+        #expect(try events(empty) == [.toolResult(toolUseId: "b", text: nil)])
+        let long = String(repeating: "y", count: Constants.toolResultTextLimit + 10)
+        let big = #"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"c","content":"\#(long)"}]}}"#
+        guard case .toolResult(_, let text) = try #require(try events(big).first) else { Issue.record("not a toolResult"); return }
+        #expect(text?.count == Constants.toolResultTextLimit)
     }
 }

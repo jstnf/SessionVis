@@ -256,7 +256,12 @@ final class AppModel {
                 let ago = Int(Date().timeIntervalSince(t.touchedAt))
                 lines.append("last touched by \(title) · \(ago)s ago")
             }
-            if let wt = snapshot.recentTouches.last(where: { $0.path == path })?.worktree { lines.append("in worktree \(wt)") }
+            let origins = node.origins.compactMap { if case .worktree(let n) = $0 { return n } else { return nil } }.sorted()
+            if sim.tree.isGhost(path), !origins.isEmpty {
+                lines.append("only in worktree\(origins.count == 1 ? "" : "s") \(origins.joined(separator: ", "))")
+            } else if let wt = snapshot.recentTouches.last(where: { $0.path == path })?.worktree {
+                lines.append("in worktree \(wt)")
+            }
             return lines
         case .avatar(let id):
             guard let a = snapshot.agents.first(where: { $0.id == id }) else { return [] }
