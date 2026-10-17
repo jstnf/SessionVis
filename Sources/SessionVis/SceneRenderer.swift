@@ -32,9 +32,10 @@ enum SceneRenderer {
                                                         center: p, startRadius: 0, endRadius: radius))
     }
 
-    // 1. Edges
+    // 1. Edges: plain grey batched, lit edges batched per hue/level (blended toward the hue and widened by strength), dying ones last.
     private static func drawEdges(_ sim: Simulation, _ ctx: inout GraphicsContext, _ viewport: CGRect) {
         var path = Path()
+        var lit: [TintKey: Path] = [:]
         var fading: [(Path, Double)] = []
         for node in sim.tree.nodes.values {
             guard let parent = node.path.parent,
@@ -45,10 +46,21 @@ enum SceneRenderer {
             var seg = Path()
             seg.move(to: sa)
             seg.addLine(to: sb)
-            if let alpha = sim.deathAlpha(node.path) { fading.append((seg, Double(alpha))) } else { path.addPath(seg) }
+            if let alpha = sim.deathAlpha(node.path) {
+                fading.append((seg, Double(alpha)))
+            } else if let t = sim.edgeTint(node.path), case let level = Int((t.strength * CGFloat(tintLevels)).rounded()), level > 0 {
+                lit[TintKey(hue: t.hueIndex, level: level), default: Path()].addPath(seg)
+            } else {
+                path.addPath(seg)
+            }
         }
-        ctx.stroke(path, with: .color(Palette.edge), lineWidth: 0.5)
-        for (seg, alpha) in fading { ctx.stroke(seg, with: .color(Palette.edge.opacity(alpha)), lineWidth: 0.5) }
+        ctx.stroke(path, with: .color(Palette.edge), lineWidth: Constants.edgeWidth)
+        for (key, seg) in lit {
+            let strength = Double(key.level) / Double(tintLevels)
+            ctx.stroke(seg, with: .color(Palette.mix(Palette.edgeRGB, HuePalette.hue(key.hue), strength)),
+                       lineWidth: Constants.edgeWidth + (Constants.litEdgeWidth - Constants.edgeWidth) * CGFloat(strength))
+        }
+        for (seg, alpha) in fading { ctx.stroke(seg, with: .color(Palette.edge.opacity(alpha)), lineWidth: Constants.edgeWidth) }
     }
 
     // 2. Nodes: glows per hot node, then batched fills (untouched files; directories and touched files; tinted files per hue/level).

@@ -30,4 +30,7 @@ public enum Constants {
     public static let tintWrite: CGFloat = 1.0
     public static let tintRead: CGFloat = 0.5
     public static let tintDuration: TimeInterval = 120
+    public static let edgeWidth: CGFloat = 0.5
+    /// Width of a lit edge at full tint strength; it eases back to `edgeWidth` as the tint fades.
+    public static let litEdgeWidth: CGFloat = 1.2
 }

@@ -90,6 +90,8 @@ public struct Simulation: Sendable {
     public private(set) var particles: [Particle] = []
     public private(set) var heat: [RepoPath: FileHeat] = [:]
     public private(set) var tints: [RepoPath: FileTint] = [:]
+    /// Lit edges, keyed by the child end of the edge: a touch lights every edge from the root down to the file.
+    public private(set) var edgeTints: [RepoPath: FileTint] = [:]
     /// `now` of the latest `update`/`apply`; lets pure accessors age time-based state.
     public private(set) var clock = Date.distantPast
     public private(set) var renderPositions: [RepoPath: CGPoint] = [:]
@@ -184,13 +186,31 @@ public struct Simulation: Sendable {
         }
     }
 
-    /// The newest touch sets the hue; strength never drops below what remains of the previous tint.
+    /// Tints the file and lights every edge above it, down from the root.
     private mutating func applyTint(_ t: Touch, hue: Int, now: Date) {
-        if let old = tints[t.path], old.touchedAt > t.at { return }
-        if tints[t.path] == nil, now.timeIntervalSince(t.at) >= Constants.tintDuration { return }
-        let fresh = t.kind == .write ? Constants.tintWrite : Constants.tintRead
-        let remaining = tints[t.path].map { Self.tintStrength($0, at: now) } ?? 0
-        tints[t.path] = FileTint(hueIndex: hue, strength: max(fresh, remaining), toucher: t.agent, toucherTitle: avatars[t.agent]?.title ?? t.agentTitle, touchedAt: t.at)
+        let fresh = FileTint(hueIndex: hue, strength: t.kind == .write ? Constants.tintWrite : Constants.tintRead,
+                             toucher: t.agent, toucherTitle: avatars[t.agent]?.title ?? t.agentTitle, touchedAt: t.at)
+        Self.merge(fresh, into: &tints, at: t.path, now: now)
+        light(pathTo: t.path, with: fresh, now: now)
+    }
+
+    /// Lights every edge from the root down to `path` with `tint`, merging into whatever each edge already has.
+    private mutating func light(pathTo path: RepoPath, with tint: FileTint, now: Date) {
+        var node: RepoPath? = path
+        while let n = node, !n.isRoot {
+            Self.merge(tint, into: &edgeTints, at: n, now: now)
+            node = n.parent
+        }
+    }
+
+    /// The newest touch sets the hue; strength never drops below what remains of the previous tint.
+    private static func merge(_ fresh: FileTint, into table: inout [RepoPath: FileTint], at key: RepoPath, now: Date) {
+        if let old = table[key], old.touchedAt > fresh.touchedAt { return }
+        if table[key] == nil, now.timeIntervalSince(fresh.touchedAt) >= Constants.tintDuration { return }
+        let remaining = table[key].map { tintStrength($0, at: now) } ?? 0
+        var merged = fresh
+        merged.strength = max(fresh.strength, remaining)
+        table[key] = merged
     }
 
     static func tintStrength(_ t: FileTint, at now: Date) -> CGFloat {
@@ -198,12 +218,17 @@ public struct Simulation: Sendable {
         return min(1, t.strength * CGFloat(max(0, 1 - age / Constants.tintDuration)))
     }
 
-    /// The file's current tint aged against `clock`, or nil when it has none left.
-    public func tint(_ path: RepoPath) -> (hueIndex: Int, strength: CGFloat)? {
-        guard let t = tints[path] else { return nil }
+    private func aged(_ t: FileTint?) -> (hueIndex: Int, strength: CGFloat)? {
+        guard let t else { return nil }
         let s = Self.tintStrength(t, at: clock)
         return s > 0 ? (t.hueIndex, s) : nil
     }
+
+    /// The file's current tint aged against `clock`, or nil when it has none left.
+    public func tint(_ path: RepoPath) -> (hueIndex: Int, strength: CGFloat)? { aged(tints[path]) }
+
+    /// The current tint of the edge between `path` and its parent, aged against `clock`, or nil when it has none left.
+    public func edgeTint(_ path: RepoPath) -> (hueIndex: Int, strength: CGFloat)? { aged(edgeTints[path]) }
 
     public func tintStrength(_ path: RepoPath) -> CGFloat { tint(path)?.strength ?? 0 }
 
@@ -280,6 +305,7 @@ public struct Simulation: Sendable {
             else { renderPositions[path] = target }
         }
         for path in renderPositions.keys where layout.position(path) == nil && dying[path] == nil { renderPositions.removeValue(forKey: path) }
+        for path in edgeTints.keys where layout.position(path) == nil { edgeTints.removeValue(forKey: path) }
     }
 
     public func position(of path: RepoPath) -> CGPoint? { renderPositions[path] ?? layout.position(path) }
@@ -291,7 +317,7 @@ public struct Simulation: Sendable {
     /// Cleanup shared by the end of the death fade and by name-swap conflicts. No relayout.
     private mutating func finishDeath(_ path: RepoPath) {
         dying.removeValue(forKey: path); born.removeValue(forKey: path); renderPositions.removeValue(forKey: path)
-        heat.removeValue(forKey: path); tints.removeValue(forKey: path); touchedPaths.remove(path)
+        heat.removeValue(forKey: path); tints.removeValue(forKey: path); edgeTints.removeValue(forKey: path); touchedPaths.remove(path)
         tree.remove(file: path)
     }
 
@@ -318,7 +344,9 @@ public struct Simulation: Sendable {
             tree.remove(file: m.from)
             renderPositions.removeValue(forKey: m.from); heat.removeValue(forKey: m.from); if touchedPaths.remove(m.from) != nil { touchedPaths.insert(m.to) }; dying.removeValue(forKey: m.from); born.removeValue(forKey: m.from)
             if let t = tints.removeValue(forKey: m.from) { tints[m.to] = t }
+            edgeTints.removeValue(forKey: m.from)
             if dying[m.to] != nil { revive(m.to) } else { clearConflicts(for: m.to); tree.insert(file: m.to) }
+            if let t = tints[m.to] { light(pathTo: m.to, with: t, now: now) }
         }
         for p in delta.added {
             if dying[p] != nil { revive(p) } else if tree.node(p)?.isDirectory != false { clearConflicts(for: p); tree.insert(file: p); born[p] = 0 }
@@ -354,6 +382,7 @@ public struct Simulation: Sendable {
         clock = now
         let k = CGFloat(min(1, dt * Self.motionRate))
         for (path, t) in tints where now.timeIntervalSince(t.touchedAt) >= Constants.tintDuration { tints.removeValue(forKey: path) }
+        for (path, t) in edgeTints where now.timeIntervalSince(t.touchedAt) >= Constants.tintDuration { edgeTints.removeValue(forKey: path) }
         for id in avatarOrder {
             guard var av = avatars[id] else { continue }
             av.scale = min(1, av.scale + CGFloat(dt / Self.spawnDuration))

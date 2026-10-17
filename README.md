@@ -28,6 +28,7 @@ What you can check by hand:
 - Two-finger pan, pinch zoom, double-click to refit the view.
 - Hover tooltips on files and orbs.
 - Files recently touched are tinted in the toucher's colour and fade back to grey over two minutes; the tooltip names the last toucher for the same window.
+- The edges from the root down to a touched file light up in the same colour, slightly thicker, and fade on the same schedule, so each session leaves a visible trail through the tree; an edge shared by several touched files takes the colour of the most recent toucher.
 - A subagent fades out within a few seconds of finishing, whether it ran in the foreground or in the background (its final hand-back call and the parent's task notification both count as the end).
 - ⌘L collapses and expands the session list.
 - ⌘, opens settings with the hook snippet.

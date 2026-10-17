@@ -178,4 +178,21 @@ import Testing
         sim.update(dt: Constants.deathDuration + 0.1, now: F.t0)
         #expect(sim.tree.node(b) == nil && sim.tints[b] == nil)
     }
+
+    @Test func moveCarriesLitPathPrunedDirectoryDropsItsEdgeAndFinishedDeathDropsTheFiles() {
+        var sim = Simulation(tree: F.tree())
+        let dirA = RepoPath(string: "A"), dirB = RepoPath(string: "B")
+        sim.apply(snapshot: StoreSnapshot(agents: [F.agent("s1")], recentTouches: [F.touch(1, "s1", "B/c.swift")]), now: F.t0)
+        #expect(sim.edgeTint(dirB)?.strength == Constants.tintWrite && sim.edgeTint(dirA) == nil)
+        let dest = RepoPath(string: "A/c.swift")
+        sim.apply(delta: TreeDelta(moved: [TreeDelta.Move(from: c, to: dest)]), now: F.t0)
+        #expect(sim.edgeTints[c] == nil && sim.edgeTint(dest)?.strength == Constants.tintWrite)
+        #expect(sim.edgeTint(dirA)?.strength == Constants.tintWrite)        // the new chain lights up
+        #expect(sim.tree.node(dirB) == nil && sim.edgeTints[dirB] == nil)     // B emptied out and was pruned
+        sim.apply(delta: TreeDelta(removed: [dest]), now: F.t0)
+        #expect(sim.edgeTint(dest)?.strength == Constants.tintWrite)         // still lit while fading out
+        sim.update(dt: Constants.deathDuration + 0.1, now: F.t0)
+        #expect(sim.tree.node(dest) == nil && sim.edgeTints[dest] == nil)
+        #expect(sim.edgeTint(dirA)?.strength == Constants.tintWrite)        // A still has files, its edge keeps fading on its own
+    }
 }

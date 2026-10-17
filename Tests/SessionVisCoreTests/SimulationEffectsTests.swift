@@ -126,4 +126,48 @@ import Testing
         #expect(sim.tints[a]?.toucherTitle == "Old session")
         #expect(sim.avatars[AgentID("gone")] == nil)
     }
+
+    @Test func touchLightsEveryEdgeFromRootToFile() {
+        var sim = primed()
+        let x = RepoPath(string: "A/deep/x.swift"), deep = RepoPath(string: "A/deep"), dirA = RepoPath(string: "A")
+        sim.apply(snapshot: StoreSnapshot(agents: [F.agent("s1")], recentTouches: [F.touch(1, "s1", "A/deep/x.swift"), F.touch(2, "s1", "B/c.swift", kind: .read)]), now: F.t0)
+        for p in [x, deep, dirA] {
+            #expect(sim.edgeTint(p)?.strength == Constants.tintWrite)
+            #expect(sim.edgeTint(p)?.hueIndex == sim.avatars[s1]?.hueIndex)
+        }
+        #expect(sim.edgeTint(RepoPath(string: "B/c.swift"))?.strength == Constants.tintRead)
+        #expect(sim.edgeTint(RepoPath(string: "B"))?.strength == Constants.tintRead)
+        #expect(sim.edgeTint(RepoPath([])) == nil)      // the root has no edge above it
+        #expect(sim.edgeTint(a) == nil)                 // untouched siblings stay dark
+    }
+
+    @Test func sharedEdgeTakesNewestHueKeepsStrongerStrengthAndExpiresWithTheTint() {
+        var sim = primed()
+        let agents = [F.agent("s1"), F.agent("s2", hue: 3)]
+        let dirA = RepoPath(string: "A")
+        sim.apply(snapshot: StoreSnapshot(agents: agents, recentTouches: [F.touch(1, "s1", "A/a.swift")]), now: F.t0)
+        let later = F.t0.addingTimeInterval(Constants.tintDuration / 4)
+        sim.update(dt: 1, now: later)
+        // a read of a sibling by another agent recolours the shared edge but keeps the stronger remaining strength
+        sim.apply(snapshot: StoreSnapshot(agents: agents, recentTouches: [F.touch(2, "s2", "A/b.swift", kind: .read, at: later)]), now: later)
+        #expect(sim.edgeTint(dirA)?.hueIndex == 3)
+        #expect(abs(sim.edgeTint(dirA)!.strength - Constants.tintWrite * 0.75) < 0.001)
+        #expect(sim.edgeTint(a)?.hueIndex == 0)                       // each file's own edge keeps its own toucher
+        #expect(sim.edgeTint(b)?.strength == Constants.tintRead)
+        // the shared edge now fades from the newer touch and is dropped with the file tints
+        sim.update(dt: 1, now: later.addingTimeInterval(Constants.tintDuration / 2))
+        #expect(abs(sim.edgeTint(dirA)!.strength - Constants.tintWrite * 0.75 / 2) < 0.001)
+        sim.update(dt: 1, now: later.addingTimeInterval(Constants.tintDuration + 1))
+        #expect(sim.edgeTint(dirA) == nil && sim.edgeTints.isEmpty)
+    }
+
+    @Test func primingLightsEdgesFromHistoryByAge() {
+        var sim = Simulation(tree: F.tree())
+        let quarterAgo = F.t0.addingTimeInterval(-Constants.tintDuration / 4)
+        let longAgo = F.t0.addingTimeInterval(-Constants.tintDuration - 1)
+        sim.apply(snapshot: StoreSnapshot(agents: [F.agent("s1")], recentTouches: [F.touch(1, "s1", "B/c.swift", at: longAgo), F.touch(2, "s1", "A/b.swift", at: quarterAgo)]), now: F.t0)
+        #expect(sim.edgeTints[RepoPath(string: "B")] == nil)
+        #expect(abs(sim.edgeTint(RepoPath(string: "A"))!.strength - Constants.tintWrite * 0.75) < 0.001)
+        #expect(abs(sim.edgeTint(b)!.strength - Constants.tintWrite * 0.75) < 0.001)
+    }
 }

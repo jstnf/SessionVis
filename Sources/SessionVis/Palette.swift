@@ -12,7 +12,8 @@ extension Color {
 enum Palette {
     static let background = Color(hex: 0x0E1117)
     static let danger = Color(hex: 0xF0605A)
-    static let edge = Color(hex: 0x2A3140)
+    static let edgeRGB = HuePalette.rgb(0x2A3140)
+    static let edge = Color(rgb: edgeRGB)
     static let nodeRGB = HuePalette.rgb(0x3A4354)
     static let node = Color(rgb: nodeRGB)
     /// Linear blend from `a` toward `b` by `t` in 0…1.
