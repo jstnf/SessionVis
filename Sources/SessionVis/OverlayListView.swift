@@ -175,7 +175,6 @@ private struct SubagentRow: View {
                     Text(agent.title).font(.system(size: 10, design: .monospaced)).foregroundStyle(Palette.textSecondary).lineLimit(1).truncationMode(.tail)
                     if selected { followGlyph }
                 }
-                Text(agent.title).font(.system(size: 10, design: .monospaced)).foregroundStyle(Palette.textSecondary).lineLimit(1).truncationMode(.tail)
                 if let c = agent.context {
                     Text(c.line).font(.system(size: 9, design: .monospaced)).foregroundStyle(Palette.contextText(fill: c.fill)).lineLimit(1)
                 }
