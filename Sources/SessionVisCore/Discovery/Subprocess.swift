@@ -34,6 +34,43 @@ enum Subprocess {
     }
 
     static func run(_ args: [String], timeout: TimeInterval) -> Result? {
+        run(args, timeout: timeout, register: nil)
+    }
+
+    /// Like `run(_:timeout:)`, but cancelling the calling task terminates the process the way a timeout does (and
+    /// kills it after the grace), so a cancelled run returns nil promptly instead of waiting out its timeout.
+    static func runCancellable(_ args: [String], timeout: TimeInterval) async -> Result? {
+        let slot = CancelSlot()
+        return await withTaskCancellationHandler {
+            run(args, timeout: timeout, register: slot.register)
+        } onCancel: {
+            slot.cancel()
+        }
+    }
+
+    /// Holds the handle of a cancellable run so a cancellation that arrives before launch still stops it.
+    private final class CancelSlot: @unchecked Sendable {
+        private let lock = NSLock()
+        private var handle: Handle?
+        private var cancelled = false
+
+        func register(_ h: Handle) {
+            let stopNow = lock.withLock { handle = h; return cancelled }
+            if stopNow { Self.stop(h) }
+        }
+
+        func cancel() {
+            let h = lock.withLock { cancelled = true; return handle }
+            if let h { Self.stop(h) }
+        }
+
+        private static func stop(_ h: Handle) {
+            h.terminate()
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + Constants.gitKillGrace) { h.kill() }
+        }
+    }
+
+    private static func run(_ args: [String], timeout: TimeInterval, register: ((Handle) -> Void)?) -> Result? {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         p.arguments = args
@@ -42,6 +79,7 @@ enum Subprocess {
         p.standardError = FileHandle.nullDevice
         do { try p.run() } catch { return nil }
         let handle = Handle(p)
+        register?(handle)
         let terminator = DispatchWorkItem { handle.terminate() }
         let killer = DispatchWorkItem { handle.kill() }
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + timeout, execute: terminator)

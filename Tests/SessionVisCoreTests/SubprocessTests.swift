@@ -28,4 +28,24 @@ import Testing
         #expect(r == nil)
         #expect(Date().timeIntervalSince(start) < 10)
     }
+
+    @Test(.timeLimit(.minutes(1))) func cancellationStopsARunningProcess() async {
+        let start = Date()
+        let task = Task { await Subprocess.runCancellable(["sleep", "30"], timeout: 60) }
+        try? await Task.sleep(for: .milliseconds(200))
+        task.cancel()
+        let r = await task.value
+        #expect(r == nil)
+        #expect(Date().timeIntervalSince(start) < 10)
+    }
+
+    @Test func cancellationBeforeLaunchReturnsNil() async {
+        let task = Task { () -> Subprocess.Result? in
+            try? await Task.sleep(for: .milliseconds(100))
+            return await Subprocess.runCancellable(["sleep", "30"], timeout: 60)
+        }
+        task.cancel()
+        let r = await task.value
+        #expect(r == nil)
+    }
 }

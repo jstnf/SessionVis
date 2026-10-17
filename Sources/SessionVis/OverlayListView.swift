@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import SessionVisCore
 
@@ -12,6 +13,14 @@ struct OverlayListView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
+            if let message = model.terminalMessage, !model.listCollapsed {
+                Text(message)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(Palette.textSecondary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.bottom, 6)
+            }
             if model.listCollapsed {
                 collapsedDots
             } else if model.mains.isEmpty {
@@ -21,9 +30,15 @@ struct OverlayListView: View {
                     LazyVStack(alignment: .leading, spacing: 2) {
                         ForEach(model.mains) { main in
                             SessionRow(agent: main, subagentCount: subagents(of: main).count,
-                                       selected: model.selectedAgent == main.id) { model.select(main.id) }
+                                       selected: model.selectedAgent == main.id,
+                                       canOpenTerminal: model.canOpenTerminal(main),
+                                       onTap: { model.select(main.id) },
+                                       onOpenTerminal: { model.openTerminal(for: main.id) })
                             ForEach(subagents(of: main)) { sub in
-                                SubagentRow(agent: sub, selected: model.selectedAgent == sub.id) { model.select(sub.id) }
+                                SubagentRow(agent: sub, selected: model.selectedAgent == sub.id,
+                                            canOpenTerminal: model.canOpenTerminal(sub),
+                                            onTap: { model.select(sub.id) },
+                                            onOpenTerminal: { model.openTerminal(for: sub.id) })
                             }
                         }
                     }
@@ -84,7 +99,10 @@ private struct SessionRow: View {
     let agent: AgentSnapshot
     let subagentCount: Int
     let selected: Bool
+    let canOpenTerminal: Bool
     let onTap: () -> Void
+    let onOpenTerminal: () -> Void
+    @State private var hovering = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
@@ -108,11 +126,27 @@ private struct SessionRow: View {
             }
             .padding(.leading, 6)
             Spacer(minLength: 0)
+            if canOpenTerminal && hovering {
+                Button(action: onOpenTerminal) {
+                    Image(systemName: "apple.terminal")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Palette.textSecondary)
+                }
+                .buttonStyle(.plain)
+                .help("Open terminal")
+                .accessibilityLabel("Open terminal")
+            }
         }
         .padding(.vertical, 5).padding(.trailing, 6)
         .background(selected ? Palette.rowHighlight : .clear, in: RoundedRectangle(cornerRadius: 6))
         .contentShape(Rectangle())
-        .onTapGesture(perform: onTap)
+        .onHover { hovering = $0 }
+        .onTapGesture {
+            if (NSApp.currentEvent?.clickCount ?? 1) >= 2 {
+                if !selected { onTap() }   // the first click toggled; a double-click leaves the row selected
+                if canOpenTerminal { onOpenTerminal() }
+            } else { onTap() }
+        }
         .opacity(agent.status.isEnded ? 0.4 : 1)
         .animation(.easeOut(duration: Constants.endedLinger), value: agent.status.isEnded)
     }
@@ -125,7 +159,9 @@ private struct SessionRow: View {
 private struct SubagentRow: View {
     let agent: AgentSnapshot
     let selected: Bool
+    let canOpenTerminal: Bool
     let onTap: () -> Void
+    let onOpenTerminal: () -> Void
 
     var body: some View {
         HStack(spacing: 5) {
@@ -147,7 +183,12 @@ private struct SubagentRow: View {
         .padding(.vertical, 2).padding(.trailing, 6)
         .background(selected ? Palette.rowHighlight : .clear, in: RoundedRectangle(cornerRadius: 4))
         .contentShape(Rectangle())
-        .onTapGesture(perform: onTap)
+        .onTapGesture {
+            if (NSApp.currentEvent?.clickCount ?? 1) >= 2 {
+                if !selected { onTap() }   // the first click toggled; a double-click leaves the row selected
+                if canOpenTerminal { onOpenTerminal() }
+            } else { onTap() }
+        }
         .opacity(agent.status.isEnded ? 0.4 : 1)
         .animation(.easeOut(duration: Constants.endedLinger), value: agent.status.isEnded)
     }

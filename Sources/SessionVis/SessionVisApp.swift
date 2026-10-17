@@ -56,6 +56,9 @@ struct SessionVisApp: App {
             CommandGroup(after: .toolbar) {
                 Button(model.listCollapsed ? "Show Session List" : "Collapse Session List") { model.listCollapsed.toggle() }
                     .keyboardShortcut("l")
+                Button("Open Terminal") { if let id = model.selectedAgent { model.openTerminal(for: id) } }
+                    .keyboardShortcut("t", modifiers: [.command, .shift])
+                    .disabled(!model.canOpenSelectedTerminal)
             }
             CommandMenu("Session") {
                 Button("Follow Next Session") { model.followNext() }

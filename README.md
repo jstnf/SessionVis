@@ -37,6 +37,7 @@ What you can check by hand:
 - Following a session zooms the camera to frame its orb, its subagents and the files it touched in the last 20 seconds, within a fixed zoom range, and rings the orb; the list row shows a scope glyph. Tab and Shift-Tab cycle the follow through live sessions, Escape stops it without moving the view, a pan or pinch stops it too.
 - ⌘L collapses and expands the session list.
 - ⌘, opens settings with the hook snippet, hidden-file rules and a "Worktrees" row listing each registered worktree as `name · path`.
+- Double-click a session row (or click the terminal button that appears when hovering it, or press ⌘⇧T with the row selected) to bring the iTerm2 or Terminal tab running that session to the front; a subagent row opens its parent's. If none is found, the list says so for a few seconds.
 
 ## Known gaps
 
@@ -46,6 +47,7 @@ What you can check by hand:
 - Worktrees are discovered through `git worktree list`; a directory under `.claude/worktrees` that git does not list is ignored, and when git cannot be run those directories are taken as the worktrees instead. A worktree deleted without `git worktree remove` or `prune` stays listed until the next registry change (its files still fade, since its listing comes back empty).
 - Directory renames animate as per-file moves.
 - `.git` churn triggers rescans (cheap).
+- Opening a session's terminal needs Automation access to iTerm2 or Terminal (macOS asks on first use) and finds only sessions on a tty one of those apps owns: tmux panes, ssh and remote sessions and other terminal apps report "No terminal window found".
 - Hover is not refreshed while panning under a still cursor.
 
 ## Develop

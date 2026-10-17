@@ -15,6 +15,8 @@ final class AppModel {
     var hoverPoint: CGPoint?
     var isReplay = false
     var hookInstalled = false
+    /// Why the last attempt to open a session's terminal failed; cleared after a moment. nil after a success or when a new attempt starts.
+    var terminalMessage: String?
     /// The registered worktrees, for Settings.
     var worktrees: [Worktree] = []
     /// Hidden-file rules for the watched directory, and what they currently hide.
@@ -41,6 +43,8 @@ final class AppModel {
     @ObservationIgnored private var refreshing = false
     @ObservationIgnored private var refreshRequested = false
     @ObservationIgnored private let filterStore = FileFilterStore()
+    @ObservationIgnored var terminalTask: Task<Void, Never>?
+    @ObservationIgnored var terminalMessageTask: Task<Void, Never>?
     static let lastDirectoryKey = "lastDirectory"
 
     var mains: [AgentSnapshot] { snapshot.agents.filter { !$0.isSubagent } }
@@ -310,6 +314,9 @@ final class AppModel {
         snapshot = .empty
         selectedAgent = nil
         hover = nil
+        terminalTask?.cancel()   // kept until the attempt returns, so a reopened directory cannot overlap it
+        terminalMessageTask?.cancel(); terminalMessageTask = nil
+        terminalMessage = nil
     }
 
     // MARK: - Hidden files

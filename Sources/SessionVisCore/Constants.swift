@@ -101,4 +101,13 @@ public enum Constants {
     /// Opacities of the main ring and its echo, before the orb's own alpha.
     public static let followRingOpacity: Double = 0.9
     public static let followRingEchoOpacity: Double = 0.25
+    /// `ps` is given this long when bringing a session's terminal to the front.
+    public static let terminalCommandTimeout: TimeInterval = 3
+    /// `osascript` is given this long. The first time the app scripts a terminal, macOS shows an Automation consent
+    /// dialog and the script blocks until it is answered, so this must outlast a person reading it.
+    public static let terminalFocusTimeout: TimeInterval = 30
+    /// A session file's pid is trusted only if the process started within this much of the file's `startedAt`.
+    public static let terminalStartTolerance: TimeInterval = 60
+    /// How long the session list shows why a terminal could not be opened.
+    public static let terminalMessageDuration: TimeInterval = 4
 }
