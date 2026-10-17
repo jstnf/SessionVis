@@ -12,6 +12,6 @@ import Testing
     @Test func touchCarriesScopeAndSource() {
         let t = Touch(seq: 1, agent: AgentID("a"), path: RepoPath(string: "Sources"), worktree: nil, kind: .read,
                       scope: .directory, source: .shell("grep"), at: Date(timeIntervalSince1970: 0))
-        #expect(t.scope == .directory && t.source == .shell("grep") && t.hueIndex == 0 && t.agentTitle == nil)
+        #expect(t.scope == .directory && t.source == .shell("grep") && t.hueIndex == 0 && t.shade == 0 && t.agentTitle == nil)
     }
 }

@@ -169,7 +169,7 @@ private struct SubagentRow: View {
     var body: some View {
         HStack(spacing: 5) {
             Rectangle().fill(Palette.edge).frame(width: 1).padding(.leading, 12)
-            Circle().fill(Palette.tint(agent.hueIndex)).frame(width: 6, height: 6)
+            Circle().fill(Palette.subagent(agent.hueIndex, shade: agent.shade)).frame(width: 6, height: 6)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 4) {
                     Text(agent.title).font(.system(size: 10, design: .monospaced)).foregroundStyle(Palette.textSecondary).lineLimit(1).truncationMode(.tail)

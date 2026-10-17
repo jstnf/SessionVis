@@ -86,4 +86,39 @@ import Testing
         #expect(subs.first?.meta == SubagentMeta(description: "Implement Task 2", agentType: "general-purpose", model: "sonnet", toolUseId: "toolu_1", spawnDepth: 1))
         #expect(SessionDiscovery.listSubagents(sessionTranscriptURL: root.appendingPathComponent("-Users-me-repo/s2.jsonl")).isEmpty)
     }
+
+    @Test func subagentsComeBackInCreationOrderNotIdOrder() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("order-\(UUID().uuidString)")
+        let subs = dir.appendingPathComponent("s1/subagents")
+        try FileManager.default.createDirectory(at: subs, withIntermediateDirectories: true)
+        let meta = #"{"agentType":"general-purpose","description":"d"}"#
+        // ids sort a, b, c but were created c, a, b
+        let created: [(String, TimeInterval)] = [("c", 1_000), ("a", 2_000), ("b", 3_000)]
+        for (id, at) in created {
+            let log = subs.appendingPathComponent("agent-\(id).jsonl")
+            try "{}\n".write(to: log, atomically: true, encoding: .utf8)
+            try meta.write(to: subs.appendingPathComponent("agent-\(id).meta.json"), atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.creationDate: Date(timeIntervalSince1970: at)], ofItemAtPath: log.path)
+        }
+        let found = SessionDiscovery.listSubagents(sessionTranscriptURL: dir.appendingPathComponent("s1.jsonl"))
+        #expect(found.map(\.agentId) == ["c", "a", "b"])
+    }
+
+    @Test func ordinalsAreRanksOverEveryTranscriptInTheFolder() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("rank-\(UUID().uuidString)")
+        let subs = dir.appendingPathComponent("s1/subagents")
+        try FileManager.default.createDirectory(at: subs, withIntermediateDirectories: true)
+        let meta = #"{"agentType":"general-purpose","description":"d"}"#
+        // "old" was modified long ago, but it still holds rank 1 so the later ones keep theirs
+        let created: [(String, TimeInterval)] = [("new", 3_000), ("old", 1_000), ("mid", 2_000)]
+        for (id, at) in created {
+            let log = subs.appendingPathComponent("agent-\(id).jsonl")
+            try "{}\n".write(to: log, atomically: true, encoding: .utf8)
+            try meta.write(to: subs.appendingPathComponent("agent-\(id).meta.json"), atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.creationDate: Date(timeIntervalSince1970: at)], ofItemAtPath: log.path)
+        }
+        let found = SessionDiscovery.listSubagents(sessionTranscriptURL: dir.appendingPathComponent("s1.jsonl"))
+        #expect(found.map(\.agentId) == ["old", "mid", "new"])
+        #expect(found.map(\.ordinal) == [1, 2, 3])
+    }
 }

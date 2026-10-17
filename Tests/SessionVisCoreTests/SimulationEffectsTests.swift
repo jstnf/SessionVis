@@ -14,6 +14,34 @@ import Testing
         return sim
     }
 
+    @Test func theToucherShadeReachesEveryEffect() {
+        let agents = [F.agent("s1"), F.agent("A", parent: "s1", shade: 2)]
+        var sim = Simulation(tree: F.tree())
+        sim.apply(snapshot: StoreSnapshot(agents: agents), now: F.t0)
+        #expect(sim.avatars[AgentID("A")]?.shade == 2 && sim.avatars[s1]?.shade == 0)
+        // the avatar's shade wins over the touch's, as its hue does
+        let touches = [F.touch(1, "A", "A/a.swift", shade: 9)]
+        sim.apply(snapshot: StoreSnapshot(agents: agents, recentTouches: touches), now: F.t0)
+        #expect(sim.tints[a]?.shade == 2 && sim.tint(a)?.shade == 2 && sim.heat[a]?.shade == 2)
+        #expect(sim.edgeTint(a)?.shade == 2 && sim.edgeTint(RepoPath(string: "A"))?.shade == 2)
+        #expect(sim.beams.last?.shade == 2)
+        #expect(!sim.particles.isEmpty && sim.particles.allSatisfy { $0.shade == 2 })
+        // a commit keeps the shade on the floor tint, the heat flash, the ripple and the pulse
+        sim.apply(snapshot: StoreSnapshot(agents: agents, recentTouches: touches, recentCommands: [F.command(1, "A", "git commit -m x")]), now: F.t0)
+        #expect(sim.tints[a]?.strength == Constants.committedTintFloor && sim.tints[a]?.shade == 2 && sim.heat[a]?.shade == 2)
+        #expect(sim.ripples.last?.shade == 2 && sim.pulses.last?.shade == 2)
+        // a later snapshot can change the shade the avatar reports, and the next touch follows it
+        let reshaded = [F.agent("s1"), F.agent("A", parent: "s1", shade: 3)]
+        sim.apply(snapshot: StoreSnapshot(agents: reshaded, recentTouches: touches + [F.touch(2, "A", "A/b.swift")]), now: F.t0)
+        #expect(sim.avatars[AgentID("A")]?.shade == 3 && sim.tints[b]?.shade == 3 && sim.beams.last?.shade == 3)
+    }
+
+    @Test func historyTouchesWithoutAnAvatarKeepTheirOwnShade() {
+        var sim = Simulation(tree: F.tree())
+        sim.apply(snapshot: StoreSnapshot(agents: [F.agent("s1")], recentTouches: [F.touch(1, "gone", "A/a.swift", hue: 3, shade: 3)]), now: F.t0)
+        #expect(sim.tint(a)?.hueIndex == 3 && sim.tint(a)?.shade == 3 && sim.heat[a]?.shade == 3 && sim.edgeTint(a)?.shade == 3)
+    }
+
     @Test func primingPassHeatsRecentHistoryWithoutBeams() {
         var sim = Simulation(tree: F.tree())
         let old = F.t0.addingTimeInterval(-Constants.touchCentroidWindow - 1)

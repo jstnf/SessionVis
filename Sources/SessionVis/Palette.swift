@@ -28,6 +28,9 @@ enum Palette {
 
     static func hue(_ i: Int) -> Color { Color(rgb: HuePalette.hue(i)) }
     static func tint(_ i: Int) -> Color { Color(rgb: HuePalette.tint(i)) }
+    static func hue(_ i: Int, shade: Int) -> Color { Color(rgb: HuePalette.hue(i, shade: shade)) }
+    /// A subagent's identity colour: its shade of the family hue, or the family tint when it has no shade.
+    static func subagent(_ i: Int, shade: Int) -> Color { shade > 0 ? hue(i, shade: shade) : tint(i) }
 
     static func status(_ s: Status) -> Color {
         switch s {

@@ -10,6 +10,8 @@ public struct DiscoveredSubagent: Equatable, Sendable {
     public let agentId: String
     public let transcriptURL: URL
     public let meta: SubagentMeta
+    /// 1-based rank by creation date among every subagent transcript of the session, announced or not.
+    public var ordinal = 0
 }
 
 /// Finds the Claude Code transcripts (sessions and their subagents) that belong to a directory.
@@ -63,18 +65,27 @@ public enum SessionDiscovery {
         return head.count >= Constants.membershipHeadBytes ? false : nil
     }
 
-    /// `<dir>/<uuid>/subagents/agent-*.jsonl` that also have `agent-*.meta.json`.
+    /// `<dir>/<uuid>/subagents/agent-*.jsonl` that also have `agent-*.meta.json`. Each one's `ordinal` ranks it among
+    /// every `agent-*.jsonl` in the folder, whether or not its metadata has been written yet.
     public static func listSubagents(sessionTranscriptURL: URL) -> [DiscoveredSubagent] {
         let dir = sessionTranscriptURL.deletingPathExtension().appendingPathComponent("subagents")
-        guard let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else { return [] }
-        var out: [DiscoveredSubagent] = []
+        guard let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.creationDateKey, .contentModificationDateKey]) else { return [] }
+        var out: [(sub: DiscoveredSubagent?, id: String, born: Date)] = []
         for f in files where f.pathExtension == "jsonl" && f.lastPathComponent.hasPrefix("agent-") {
             let base = f.deletingPathExtension().lastPathComponent          // agent-<id>
             let metaURL = dir.appendingPathComponent(base + ".meta.json")
-            guard let data = try? Data(contentsOf: metaURL),
-                  let meta = try? JSONDecoder().decode(SubagentMeta.self, from: data) else { continue }
-            out.append(DiscoveredSubagent(agentId: String(base.dropFirst("agent-".count)), transcriptURL: f, meta: meta))
+            let values = try? f.resourceValues(forKeys: [.creationDateKey, .contentModificationDateKey])
+            let born = values?.creationDate ?? values?.contentModificationDate ?? .distantPast
+            let agentId = String(base.dropFirst("agent-".count))
+            let meta = (try? Data(contentsOf: metaURL)).flatMap { try? JSONDecoder().decode(SubagentMeta.self, from: $0) }
+            out.append((meta.map { DiscoveredSubagent(agentId: agentId, transcriptURL: f, meta: $0) }, agentId, born))
         }
-        return out.sorted { $0.agentId < $1.agentId }
+        // Oldest first; the rank is the subagent's ordinal, so shading is stable across launches.
+        let sorted = out.sorted { $0.born != $1.born ? $0.born < $1.born : $0.id < $1.id }
+        return sorted.enumerated().compactMap { i, item in
+            guard var sub = item.sub else { return nil }
+            sub.ordinal = i + 1
+            return sub
+        }
     }
 }

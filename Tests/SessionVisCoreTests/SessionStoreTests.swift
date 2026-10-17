@@ -208,6 +208,110 @@ final class TestClock: @unchecked Sendable {
         #expect(snap.agents.first { $0.id == AgentID("s1") } != nil)
     }
 
+    func announce(_ id: String, ordinal: Int?, depth: Int = 1) -> SourceEvent {
+        .subagentAppeared(sessionId: "s1", agentId: id, meta: SubagentMeta(description: id, toolUseId: "toolu_\(id)", spawnDepth: depth), ordinal: ordinal ?? 0)
+    }
+    func spawnCall(_ id: String, by agent: String? = nil, at: TimeInterval = 0) -> SourceEvent {
+        line(.toolUse(id: "toolu_\(id)", name: "Agent", filePath: nil, description: id, question: nil), at: at, agent: agent)
+    }
+    func shades(_ store: SessionStore) async -> [String: Int] {
+        var out: [String: Int] = [:]
+        for a in await store.snapshot().agents { out[a.id.raw] = a.shade }
+        return out
+    }
+
+    @Test func nestedChildAnnouncedAfterLaunchDiffersFromItsSubagentParent() async {
+        let clock = TestClock(); let store = SessionStore(folder: folder, clock: clock.read)
+        await store.apply(.sessionAppeared(sessionId: "s1", transcriptURL: url))
+        for (i, id) in ["A", "B", "C", "D"].enumerated() { await store.apply(spawnCall(id)); await store.apply(announce(id, ordinal: i + 1)) }
+        // ordinal 5 cycles back to A's shade 1, so N is bumped to 2
+        await store.apply(spawnCall("N", by: "A", at: 1))
+        await store.apply(announce("N", ordinal: 5, depth: 2))
+        let s = await shades(store)
+        #expect(s["A"] == 1 && s["N"] == 2 && s["s1"] == 0)
+    }
+
+    @Test func shadesAreTheSameLiveAndAfterARelaunchWhereEverySubagentIsAnnouncedFirst() async {
+        let ids = ["A", "B", "C", "D", "N"]
+        let live = SessionStore(folder: folder, clock: TestClock().read)
+        await live.apply(.sessionAppeared(sessionId: "s1", transcriptURL: url))
+        for (i, id) in ids.dropLast().enumerated() { await live.apply(spawnCall(id)); await live.apply(announce(id, ordinal: i + 1)) }
+        await live.apply(spawnCall("N", by: "A", at: 1))
+        await live.apply(announce("N", ordinal: 5, depth: 2))
+
+        let relaunch = SessionStore(folder: folder, clock: TestClock().read)
+        await relaunch.apply(.sessionAppeared(sessionId: "s1", transcriptURL: url))
+        for (i, id) in ids.enumerated() { await relaunch.apply(announce(id, ordinal: i + 1)) }   // N is parented to main for now
+        for id in ids.dropLast() { await relaunch.apply(spawnCall(id)) }
+        await relaunch.apply(spawnCall("N", by: "A", at: 1))                                    // reparents N under A
+        let snap = await relaunch.snapshot()
+        #expect(snap.agents.first { $0.id == AgentID("N") }?.parent == AgentID("A"))
+        let l = await shades(live), r = await shades(relaunch)
+        #expect(l == r)
+        #expect(r["N"] != r["A"])
+    }
+
+    @Test func aSubagentIdlePastTheActiveWindowStillOccupiesItsOrdinal() async {
+        func shadeOfB(announceA: Bool) async -> Int? {
+            let store = SessionStore(folder: folder, clock: TestClock().read)
+            await store.apply(.sessionAppeared(sessionId: "s1", transcriptURL: url))
+            if announceA { await store.apply(announce("A", ordinal: 1)) }
+            await store.apply(announce("B", ordinal: 2))
+            return await shades(store)["B"]
+        }
+        let live = await shadeOfB(announceA: true), relaunch = await shadeOfB(announceA: false)
+        #expect(live == 2 && relaunch == 2)
+    }
+
+    @Test func reparentingRecomputesTheShadeFromTheNewParent() async {
+        let store = SessionStore(folder: folder, clock: TestClock().read)
+        await store.apply(.sessionAppeared(sessionId: "s1", transcriptURL: url))
+        await store.apply(announce("A", ordinal: 1))
+        await store.apply(announce("N", ordinal: 5, depth: 2))
+        #expect(await shades(store)["N"] == 1)                 // parented to main for now
+        await store.apply(spawnCall("A"))
+        await store.apply(spawnCall("N", by: "A", at: 1))
+        let s = await shades(store)
+        #expect(s["A"] == 1 && s["N"] == 2)
+    }
+
+    @Test func subagentsTakeShadesFromSourceOrdinalsAndKeepThem() async {
+        let clock = TestClock(); let store = SessionStore(folder: folder, clock: clock.read)
+        await store.apply(.sessionAppeared(sessionId: "s1", transcriptURL: url))
+        for (i, id) in ["A", "B", "C", "D", "E"].enumerated() { await store.apply(announce(id, ordinal: i + 1)) }
+        var snap = await store.snapshot()
+        func shade(_ id: String) -> Int? { snap.agents.first { $0.id == AgentID(id) }?.shade }
+        #expect(["A", "B", "C", "D", "E"].map(shade) == [1, 2, 3, 4, 1])
+        #expect(shade("s1") == 0)
+        // touches carry the toucher's shade
+        await store.apply(edit("/repo/A.swift", id: "e1", at: 2, agent: "A"))
+        await store.apply(edit("/repo/B.swift", id: "e2", at: 2))
+        snap = await store.snapshot()
+        #expect(snap.recentTouches.map(\.shade) == [1, 0])
+        // a retired subagent comes back with its shade
+        await store.apply(line(.toolUse(id: "hb", name: "SubagentHandback", filePath: nil, description: nil, question: nil), at: 3, agent: "A"))
+        clock.advance(Constants.endedLinger + 0.1)
+        snap = await store.snapshot()
+        #expect(shade("A") == nil)
+        await store.apply(line(.userPrompt(text: "continue"), at: 30, agent: "A"))
+        // a subagent seen through a line before its announcement takes the announced ordinal
+        await store.apply(edit("/repo/Z.swift", id: "e3", at: 31, agent: "Z"))
+        await store.apply(announce("Z", ordinal: 7))
+        await store.apply(edit("/repo/Z2.swift", id: "e4", at: 32, agent: "Z"))     // earlier touches keep the shade they were stamped with
+        snap = await store.snapshot()
+        #expect(shade("s1") == 0 && shade("A") == 1 && shade("Z") == 3)
+        #expect(snap.recentTouches.last?.shade == shade("Z"))
+    }
+
+    @Test func aSubagentWithoutASourceOrdinalTakesTheNextFreeOne() async {
+        let store = SessionStore(folder: folder, clock: TestClock().read)
+        await store.apply(.sessionAppeared(sessionId: "s1", transcriptURL: url))
+        await store.apply(announce("A", ordinal: 2))
+        await store.apply(edit("/repo/Z.swift", id: "e1", at: 1, agent: "Z"))
+        let s = await shades(store)
+        #expect(s["A"] == 2 && s["Z"] == 3)
+    }
+
     @Test func endedButLingeringSubagentResumesOnNewerEvent() async {
         let clock = TestClock(); let store = SessionStore(folder: folder, clock: clock.read)
         await store.apply(.sessionAppeared(sessionId: "s1", transcriptURL: url))

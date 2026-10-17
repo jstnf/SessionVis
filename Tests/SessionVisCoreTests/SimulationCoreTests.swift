@@ -6,13 +6,13 @@ import Testing
 enum SimFixtures {
     static let t0 = Date(timeIntervalSince1970: 1_000_000)
     static func tree() -> FileTree { FileTree(files: ["A/a.swift", "A/b.swift", "B/c.swift"].map(RepoPath.init(string:))) }
-    static func agent(_ id: String, parent: String? = nil, status: Status = .working, hue: Int = 0, context: ContextUsage? = nil) -> AgentSnapshot {
+    static func agent(_ id: String, parent: String? = nil, status: Status = .working, hue: Int = 0, shade: Int = 0, context: ContextUsage? = nil) -> AgentSnapshot {
         let kind: AgentKind = parent.map { .subagent(parent: AgentID($0), description: "sub \(id)", agentType: nil, model: nil) } ?? .main
         return AgentSnapshot(id: AgentID(id), kind: kind, title: id, status: status, hueIndex: hue, branch: nil, worktree: nil,
-                             firstSeen: t0, lastActivity: t0, endedAt: nil, touchCount: 0, context: context)
+                             firstSeen: t0, lastActivity: t0, endedAt: nil, touchCount: 0, context: context, shade: shade)
     }
-    static func touch(_ seq: UInt64, _ agent: String, _ path: String, kind: TouchKind = .write, scope: TouchScope = .file, source: TouchSource = .tool("Edit"), at: Date = t0, hue: Int = 0, title: String? = nil) -> Touch {
-        Touch(seq: seq, agent: AgentID(agent), path: RepoPath(string: path), worktree: nil, kind: kind, scope: scope, source: source, at: at, hueIndex: hue, agentTitle: title)
+    static func touch(_ seq: UInt64, _ agent: String, _ path: String, kind: TouchKind = .write, scope: TouchScope = .file, source: TouchSource = .tool("Edit"), at: Date = t0, hue: Int = 0, title: String? = nil, shade: Int = 0) -> Touch {
+        Touch(seq: seq, agent: AgentID(agent), path: RepoPath(string: path), worktree: nil, kind: kind, scope: scope, source: source, at: at, hueIndex: hue, shade: shade, agentTitle: title)
     }
     static func command(_ seq: UInt64, _ agent: String, _ command: String, label: String? = nil, at: Date = t0, hue: Int = 0, commit: CommitInfo? = nil) -> CommandEvent {
         CommandEvent(seq: seq, agent: AgentID(agent), toolUseId: "t\(seq)", at: at, commandClass: CommandClassifier.classify(command),

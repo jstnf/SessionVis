@@ -22,7 +22,11 @@ public struct DiskChange: Equatable, Sendable {
 /// What both the live source and the replay source emit; the store consumes it.
 public enum SourceEvent: Equatable, Sendable {
     case sessionAppeared(sessionId: String, transcriptURL: URL)
-    case subagentAppeared(sessionId: String, agentId: String, meta: SubagentMeta)
+    /// `ordinal` is the 1-based rank of the subagent's transcript among all of its session's subagent transcripts
+    /// (0: unknown), which fixes its shade independently of when it is announced.
+    case subagentAppeared(sessionId: String, agentId: String, meta: SubagentMeta, ordinal: Int = 0)
+    /// A tracked subagent's rank changed because its session's folder did.
+    case subagentOrdinal(sessionId: String, agentId: String, ordinal: Int)
     case line(sessionId: String, agentId: String?, TranscriptLine)
     case hook(HookEvent)
     case diagnostics(skippedLines: Int)

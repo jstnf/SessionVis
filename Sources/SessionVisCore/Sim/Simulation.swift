@@ -10,6 +10,7 @@ public struct AvatarState: Equatable, Sendable {
     public var renderScale: CGFloat     // scale × waiting pulse
     public var alpha: CGFloat           // 1 → 0 over endedLinger once ended
     public var hueIndex: Int
+    public var shade: Int
     public var isSubagent: Bool
     public var parent: AgentID?
     public var status: Status
@@ -52,11 +53,13 @@ struct GridKey: Hashable, Sendable {
 public struct FileHeat: Equatable, Sendable {
     public var value: CGFloat
     public var hueIndex: Int
+    public var shade: Int = 0
 }
 
 /// A file's lingering colour after a touch; fades to nothing over `tintDuration`.
 public struct FileTint: Equatable, Sendable {
     public var hueIndex: Int
+    public var shade: Int = 0
     public var strength: CGFloat
     public var toucher: AgentID
     public var toucherTitle: String?
@@ -69,6 +72,7 @@ public struct Beam: Equatable, Sendable {
     public let from: AgentID
     public let to: RepoPath
     public let hueIndex: Int
+    public var shade: Int = 0
     public let kind: TouchKind
     public var age: TimeInterval
     public var alpha: CGFloat { max(0, 1 - CGFloat(age / Constants.beamDuration)) }
@@ -81,6 +85,7 @@ public struct Particle: Equatable, Sendable {
     public var velocity: CGPoint
     public var life: TimeInterval
     public let hueIndex: Int
+    public var shade: Int = 0
 }
 
 /// One Bash call: an expanding ring on the orb plus a label beside it.
@@ -88,6 +93,7 @@ public struct Pulse: Equatable, Sendable {
     public let id: UInt64
     public let agent: AgentID
     public let hueIndex: Int
+    public var shade: Int = 0
     public let label: String
     public let milestone: Milestone?
     public var age: TimeInterval
@@ -102,6 +108,7 @@ public struct Pulse: Equatable, Sendable {
 public struct Ripple: Equatable, Sendable {
     public let agent: AgentID
     public let hueIndex: Int
+    public var shade: Int = 0
     public let maxDepth: Int
     public var age: TimeInterval
     public var progress: CGFloat { min(1, CGFloat(age / Constants.rippleDuration)) }
@@ -198,7 +205,7 @@ public struct Simulation: Sendable {
         for a in snapshot.agents {
             seen.insert(a.id)
             if var av = avatars[a.id] {
-                av.status = a.status; av.title = a.title; av.hueIndex = a.hueIndex; av.parent = a.parent
+                av.status = a.status; av.title = a.title; av.hueIndex = a.hueIndex; av.shade = a.shade; av.parent = a.parent
                 av.contextFill = a.context?.fill.map { CGFloat($0) }
                 avatars[a.id] = av
             } else if a.status != .ended {
@@ -227,11 +234,11 @@ public struct Simulation: Sendable {
         for c in commands where c.seq > lastCommandSeq {
             lastCommandSeq = c.seq
             guard !priming, var av = avatars[c.agent] else { continue }
-            pulses.append(Pulse(id: nextPulseId, agent: c.agent, hueIndex: av.hueIndex, label: c.label, milestone: c.milestone, age: 0))
+            pulses.append(Pulse(id: nextPulseId, agent: c.agent, hueIndex: av.hueIndex, shade: av.shade, label: c.label, milestone: c.milestone, age: 0))
             nextPulseId += 1
             switch c.milestone {
             case .commit(let info):
-                commitEffects(agent: c.agent, hue: av.hueIndex, now: now)
+                commitEffects(agent: c.agent, hue: av.hueIndex, shade: av.shade, now: now)
                 av.badge = info?.shortHash ?? "committed"; av.badgeSeq = c.seq; av.badgeLift = nil
             case .push:
                 if av.badge != nil, av.badgeLift == nil { av.badgeLift = 0 }
@@ -248,12 +255,12 @@ public struct Simulation: Sendable {
     }
 
     /// Ripple along the agent's lit edges, flash its tinted files, and drop their tint to the committed floor.
-    private mutating func commitEffects(agent: AgentID, hue: Int, now: Date) {
+    private mutating func commitEffects(agent: AgentID, hue: Int, shade: Int, now: Date) {
         let depth = edgeTints.filter { $0.value.toucher == agent }.keys.map(\.depth).max() ?? 1
-        ripples.append(Ripple(agent: agent, hueIndex: hue, maxDepth: max(1, depth), age: 0))
+        ripples.append(Ripple(agent: agent, hueIndex: hue, shade: shade, maxDepth: max(1, depth), age: 0))
         for (path, t) in tints where t.toucher == agent {
-            tints[path] = FileTint(hueIndex: t.hueIndex, strength: Constants.committedTintFloor, toucher: agent, toucherTitle: t.toucherTitle, touchedAt: now, source: t.source)
-            heat[path] = FileHeat(value: Constants.heatWrite, hueIndex: t.hueIndex)
+            tints[path] = FileTint(hueIndex: t.hueIndex, shade: t.shade, strength: Constants.committedTintFloor, toucher: agent, toucherTitle: t.toucherTitle, touchedAt: now, source: t.source)
+            heat[path] = FileHeat(value: Constants.heatWrite, hueIndex: t.hueIndex, shade: t.shade)
         }
     }
 
@@ -262,7 +269,7 @@ public struct Simulation: Sendable {
         var pos = Geometry.pointOnCircle(center: .zero, radius: layout.outerRadius + Self.spawnOffset, angle: angle)
         if a.isSubagent, let p = a.parent, let parentAvatar = avatars[p] { pos = parentAvatar.position }
         return AvatarState(id: a.id, position: pos, target: pos, anchor: pos, scale: 0, renderScale: 0, alpha: 1,
-                           hueIndex: a.hueIndex, isSubagent: a.isSubagent, parent: a.parent, status: a.status,
+                           hueIndex: a.hueIndex, shade: a.shade, isSubagent: a.isSubagent, parent: a.parent, status: a.status,
                            title: a.title, spawnAngle: angle, lastTouchPath: nil, badge: nil, badgeSeq: nil, badgeLift: nil,
                            contextFill: a.context?.fill.map { CGFloat($0) })
     }
@@ -293,11 +300,12 @@ public struct Simulation: Sendable {
             avatars[t.agent]?.lastTouchPath = target
             lastTouchSeq = max(lastTouchSeq, t.seq)
             let hue = avatars[t.agent]?.hueIndex ?? t.hueIndex
-            applyTint(t, at: target, hue: hue, now: now)
+            let shade = avatars[t.agent]?.shade ?? t.shade
+            applyTint(t, at: target, hue: hue, shade: shade, now: now)
             if priming {
-                if now.timeIntervalSince(t.at) <= Constants.touchCentroidWindow { applyHeat(t, at: target, hue: hue) }
+                if now.timeIntervalSince(t.at) <= Constants.touchCentroidWindow { applyHeat(t, at: target, hue: hue, shade: shade) }
             } else {
-                fire(t, at: target, hue: hue)
+                fire(t, at: target, hue: hue, shade: shade)
             }
         }
     }
@@ -313,8 +321,8 @@ public struct Simulation: Sendable {
     }
 
     /// Tints the file and lights every edge above it, down from the root.
-    private mutating func applyTint(_ t: Touch, at path: RepoPath, hue: Int, now: Date) {
-        let fresh = FileTint(hueIndex: hue, strength: t.kind == .write ? Constants.tintWrite : Constants.tintRead,
+    private mutating func applyTint(_ t: Touch, at path: RepoPath, hue: Int, shade: Int, now: Date) {
+        let fresh = FileTint(hueIndex: hue, shade: shade, strength: t.kind == .write ? Constants.tintWrite : Constants.tintRead,
                              toucher: t.agent, toucherTitle: avatars[t.agent]?.title ?? t.agentTitle, touchedAt: t.at, source: t.source)
         Self.merge(fresh, into: &tints, at: path, now: now)
         light(pathTo: path, with: fresh, now: now)
@@ -344,39 +352,40 @@ public struct Simulation: Sendable {
         return min(1, t.strength * CGFloat(max(0, 1 - age / Constants.tintDuration)))
     }
 
-    private func aged(_ t: FileTint?) -> (hueIndex: Int, strength: CGFloat)? {
+    private func aged(_ t: FileTint?) -> (hueIndex: Int, shade: Int, strength: CGFloat)? {
         guard let t else { return nil }
         let s = Self.tintStrength(t, at: clock)
-        return s > 0 ? (t.hueIndex, s) : nil
+        return s > 0 ? (t.hueIndex, t.shade, s) : nil
     }
 
     /// The file's current tint aged against `clock`, or nil when it has none left.
-    public func tint(_ path: RepoPath) -> (hueIndex: Int, strength: CGFloat)? { aged(tints[path]) }
+    public func tint(_ path: RepoPath) -> (hueIndex: Int, shade: Int, strength: CGFloat)? { aged(tints[path]) }
 
     /// The current tint of the edge between `path` and its parent, aged against `clock`, or nil when it has none left.
-    public func edgeTint(_ path: RepoPath) -> (hueIndex: Int, strength: CGFloat)? { aged(edgeTints[path]) }
+    public func edgeTint(_ path: RepoPath) -> (hueIndex: Int, shade: Int, strength: CGFloat)? { aged(edgeTints[path]) }
 
     public func tintStrength(_ path: RepoPath) -> CGFloat { tint(path)?.strength ?? 0 }
 
-    private mutating func applyHeat(_ t: Touch, at path: RepoPath, hue: Int) {
+    private mutating func applyHeat(_ t: Touch, at path: RepoPath, hue: Int, shade: Int) {
         let amount = t.kind == .write ? Constants.heatWrite : Constants.heatRead
-        var h = heat[path] ?? FileHeat(value: 0, hueIndex: hue)
+        var h = heat[path] ?? FileHeat(value: 0, hueIndex: hue, shade: shade)
         h.value = max(h.value, amount)
         h.hueIndex = hue
+        h.shade = shade
         heat[path] = h
     }
 
-    private mutating func fire(_ t: Touch, at path: RepoPath, hue: Int) {
-        beams.append(Beam(id: nextBeamId, from: t.agent, to: path, hueIndex: hue, kind: t.kind, age: 0))
+    private mutating func fire(_ t: Touch, at path: RepoPath, hue: Int, shade: Int) {
+        beams.append(Beam(id: nextBeamId, from: t.agent, to: path, hueIndex: hue, shade: shade, kind: t.kind, age: 0))
         nextBeamId += 1
-        applyHeat(t, at: path, hue: hue)
+        applyHeat(t, at: path, hue: hue, shade: shade)
         guard t.kind == .write, let origin = layout.position(path) else { return }
         let h = Geometry.stableHash("touch-\(t.seq)")
         for i in 0..<Constants.particlesPerWrite {
             let angle = Geometry.unitFraction(fromHash: h, salt: UInt64(i)) * 2 * .pi
             let speed = Self.particleMinSpeed + Geometry.unitFraction(fromHash: h, salt: UInt64(100 + i)) * Self.particleSpeedRange
             particles.append(Particle(position: origin, velocity: CGPoint(x: cos(angle) * speed, y: sin(angle) * speed),
-                                      life: Self.particleLife, hueIndex: hue))
+                                      life: Self.particleLife, hueIndex: hue, shade: shade))
         }
     }
 

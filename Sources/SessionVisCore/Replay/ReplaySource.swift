@@ -34,7 +34,7 @@ public struct ReplaySource: Sendable {
         for (sub, lines) in subagents {
             let filled = fill(lines)
             let appearAt = filled.first?.0 ?? .distantPast
-            entries.append(Entry(time: appearAt, order: order, event: .subagentAppeared(sessionId: sessionId, agentId: sub.agentId, meta: sub.meta))); order += 1
+            entries.append(Entry(time: appearAt, order: order, event: .subagentAppeared(sessionId: sessionId, agentId: sub.agentId, meta: sub.meta, ordinal: sub.ordinal))); order += 1
             for (t, l) in filled { entries.append(Entry(time: t, order: order, event: .line(sessionId: sessionId, agentId: sub.agentId, l))); order += 1 }
         }
         entries.sort { $0.time == $1.time ? $0.order < $1.order : $0.time < $1.time }

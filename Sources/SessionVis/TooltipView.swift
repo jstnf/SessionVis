@@ -1,5 +1,11 @@
 import SwiftUI
 
+/// One tooltip line; the swatch is the colour of the toucher or orb the line names.
+struct TooltipLine {
+    let text: String
+    var swatch: Color? = nil
+}
+
 struct TooltipView: View {
     let model: AppModel
     @State private var size: CGSize = .zero
@@ -12,10 +18,13 @@ struct TooltipView: View {
                 let y = size == .zero ? p.y + 18 : max(8, min(p.y + 18, geo.size.height - size.height - 8))
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(Array(lines.enumerated()), id: \.offset) { i, line in
-                        Text(line)
-                            .font(.system(size: i == 0 ? 11 : 10, design: .monospaced))
-                            .foregroundStyle(i == 0 ? Palette.text : Palette.textSecondary)
-                            .lineLimit(1)
+                        HStack(spacing: 5) {
+                            if let swatch = line.swatch { Circle().fill(swatch).frame(width: 6, height: 6) }
+                            Text(line.text)
+                                .font(.system(size: i == 0 ? 11 : 10, design: .monospaced))
+                                .foregroundStyle(i == 0 ? Palette.text : Palette.textSecondary)
+                                .lineLimit(1)
+                        }
                     }
                 }
                 .padding(.horizontal, 8).padding(.vertical, 6)

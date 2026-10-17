@@ -1,6 +1,6 @@
 # SessionVis
 
-A native macOS visualiser for live Claude Code sessions. Point it at a directory and it tails the Claude Code transcripts for that directory (and every git worktree of it, wherever it is checked out), draws the repo as a gource-style radial graph, and shows each session as an orb that fires beams at the files it reads and edits. Subagents are smaller orbs inside their parent's halo. A touched file flashes in the session's colour, then keeps a tint of it that fades back to grey over two minutes, so you can see where each agent has recently been. A floating list mirrors iTerm's Session Status panel.
+A native macOS visualiser for live Claude Code sessions. Point it at a directory and it tails the Claude Code transcripts for that directory (and every git worktree of it, wherever it is checked out), draws the repo as a gource-style radial graph, and shows each session as an orb that fires beams at the files it reads and edits. Subagents are smaller orbs inside their parent's halo, each in its own shade of the parent's colour. A touched file flashes in the session's colour, then keeps a tint of it that fades back to grey over two minutes, so you can see where each agent has recently been. A floating list mirrors iTerm's Session Status panel.
 
 ![SessionVis showing live sessions over a repo's file graph](docs/ui.png)
 
@@ -27,7 +27,7 @@ What you can check by hand:
 
 - Two-finger pan, pinch zoom, double-click to refit the view.
 - Hover tooltips on files and orbs.
-- Files recently touched are tinted in the toucher's colour and fade back to grey over two minutes; the tooltip names the last toucher for the same window.
+- Files recently touched are tinted in the toucher's colour and fade back to grey over two minutes; the tooltip names the last toucher for the same window and shows a swatch of its colour. A subagent's colour is a shade of its session's (paler, darker, pastel or deep, by the order the subagent transcripts were created, which can shift live if the folder changes but always matches a relaunch; a nested subagent never repeats its parent's), so the trail says which subagent was there while the halo says which session.
 - The edges from the root down to a touched file light up in the same colour, slightly thicker, and fade on the same schedule, so each session leaves a visible trail through the tree; an edge shared by several touched files takes the colour of the most recent toucher.
 - Every git worktree of the repository is folded onto the tree, wherever it is checked out (`.claude/worktrees`, a `.worktrees` folder inside the root, or a sibling directory), and is picked up as soon as git registers it. Files that exist only in a worktree draw as hollow rings on dashed edges, seeded from disk at launch. A ring fills into a dot when the file lands in the main checkout, and dies red when its worktree is removed. The tooltip names the worktree.
 - Every Bash call pulses the calling orb with a short label. A git commit ripples along the edges that session has lit, drops its files' tint to a faint floor and pins the short hash above the orb; a push lifts the badge off. The session list shows the running command and the latest git milestone.

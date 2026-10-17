@@ -16,6 +16,7 @@ public actor LiveSource {
         var watcher: FileWatcher?
     }
     private var tracked: [String: Tracked] = [:]          // transcript path → tailer
+    private var announcedOrdinals: [String: Int] = [:]     // subagent transcript path → last ordinal sent
     private var membership: [String: Bool] = [:]           // transcript path → belongs to folder
     private var mainTranscripts: [String: URL] = [:]       // sessionId → URL (for subagent discovery)
     private var directoryWatchers: [String: FileWatcher] = [:]
@@ -99,11 +100,20 @@ public actor LiveSource {
         }
         for (sessionId, url) in mainTranscripts.sorted(by: { $0.key < $1.key }) {
             watchSubagentDirectory(sessionId: sessionId, transcriptURL: url)
-            for sub in SessionDiscovery.listSubagents(sessionTranscriptURL: url) where tracked[sub.transcriptURL.path] == nil {
+            for sub in SessionDiscovery.listSubagents(sessionTranscriptURL: url) {
+                let path = sub.transcriptURL.path
+                if tracked[path] != nil {
+                    if let sent = announcedOrdinals[path], sent != sub.ordinal {
+                        announcedOrdinals[path] = sub.ordinal
+                        continuation.yield(.subagentOrdinal(sessionId: sessionId, agentId: sub.agentId, ordinal: sub.ordinal))
+                    }
+                    continue
+                }
                 guard let mtime = Self.modificationDate(sub.transcriptURL),
                       now.timeIntervalSince(mtime) <= Constants.activeWindow else { continue }
                 track(path: sub.transcriptURL.path, url: sub.transcriptURL, sessionId: sessionId, agentId: sub.agentId, watchFile: false)
-                continuation.yield(.subagentAppeared(sessionId: sessionId, agentId: sub.agentId, meta: sub.meta))
+                announcedOrdinals[path] = sub.ordinal
+                continuation.yield(.subagentAppeared(sessionId: sessionId, agentId: sub.agentId, meta: sub.meta, ordinal: sub.ordinal))
             }
         }
     }

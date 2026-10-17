@@ -44,13 +44,13 @@ enum SourceFixtures {
     }
     @Test func mergesSortsScalesAndCapsDelays() {
         let main = [line(0, .userPrompt(text: "a")), line(100, .turnEnded), line(nil, .title("t")), line(400, .userPrompt(text: "b"))]
-        let sub = DiscoveredSubagent(agentId: "x", transcriptURL: URL(fileURLWithPath: "/x.jsonl"), meta: SubagentMeta(description: "d"))
+        let sub = DiscoveredSubagent(agentId: "x", transcriptURL: URL(fileURLWithPath: "/x.jsonl"), meta: SubagentMeta(description: "d"), ordinal: 1)
         let subLines = [line(50, .assistantText(text: "hi", endOfTurn: false))]
         let sched = ReplaySource.schedule(sessionId: "s1", main: main, subagents: [(sub, subLines)], speed: 10)
         #expect(sched.map(\.delay) == [0, 0, 5, 0, 5, 0, 5])
         if case .sessionAppeared(let sid, _) = sched[0].event { #expect(sid == "s1") } else { Issue.record("expected sessionAppeared first") }
         #expect(sched[1].event == .line(sessionId: "s1", agentId: nil, main[0]))
-        #expect(sched[2].event == .subagentAppeared(sessionId: "s1", agentId: "x", meta: sub.meta))   // at the subagent's first timestamp (50)
+        #expect(sched[2].event == .subagentAppeared(sessionId: "s1", agentId: "x", meta: sub.meta, ordinal: 1))   // at the subagent's first timestamp (50)
         #expect(sched[3].event == .line(sessionId: "s1", agentId: "x", subLines[0]))
         #expect(sched[4].event == .line(sessionId: "s1", agentId: nil, main[1]))
         #expect(sched[5].event == .line(sessionId: "s1", agentId: nil, main[2]))                     // nil timestamp inherits previous
@@ -66,7 +66,7 @@ enum SourceFixtures {
         #expect(events.count == 6)
         if case .sessionAppeared(let sid, let url) = events[0] { #expect(sid == "s1" && url == s1) } else { Issue.record("expected sessionAppeared") }
         #expect(events[1] == .initialLoadComplete)
-        #expect(events.contains { if case .subagentAppeared(_, let aid, _) = $0 { return aid == "abc" } else { return false } })
+        #expect(events.contains { if case .subagentAppeared(_, let aid, _, _) = $0 { return aid == "abc" } else { return false } })
         let end = await reader.next()
         #expect(end == nil)   // stream finishes
     }
@@ -96,7 +96,7 @@ enum SourceFixtures {
         // Expected: s1 appears, its subagent appears, then lines: s1's prompt, abc's text + turnEnded, then diagnostics.
         let first = await reader.collect(6)
         #expect(first[0] == .sessionAppeared(sessionId: "s1", transcriptURL: s1))
-        if case .subagentAppeared(let sid, let aid, let meta) = first[1] { #expect(sid == "s1" && aid == "abc" && meta.description == "look around") } else { Issue.record("expected subagentAppeared, got \(first[1])") }
+        if case .subagentAppeared(let sid, let aid, let meta, _) = first[1] { #expect(sid == "s1" && aid == "abc" && meta.description == "look around") } else { Issue.record("expected subagentAppeared, got \(first[1])") }
         #expect(first.contains { if case .line("s1", nil, let l) = $0 { return l.event == .userPrompt(text: "hello") } else { return false } })
         #expect(first.contains { if case .line("s1", "abc", let l) = $0 { return l.event == .turnEnded } else { return false } })
         #expect(first.last == .diagnostics(skippedLines: 0))
@@ -161,8 +161,8 @@ enum SourceFixtures {
             events.append(e)
             if e == .initialLoadComplete { break }
         }
-        #expect(events.contains { if case .subagentAppeared(_, let aid, _) = $0 { return aid == "abc" } else { return false } })
-        #expect(!events.contains { if case .subagentAppeared(_, let aid, _) = $0 { return aid == "old" } else { return false } })
+        #expect(events.contains { if case .subagentAppeared(_, let aid, _, _) = $0 { return aid == "abc" } else { return false } })
+        #expect(!events.contains { if case .subagentAppeared(_, let aid, _, _) = $0 { return aid == "old" } else { return false } })
         // initialLoadComplete follows the initial lines and diagnostics.
         #expect(events.contains { if case .line("s1", nil, let l) = $0 { return l.event == .userPrompt(text: "hello") } else { return false } })
         #expect(events.dropLast().last == .diagnostics(skippedLines: 0))

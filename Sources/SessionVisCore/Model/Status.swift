@@ -70,10 +70,11 @@ public struct Touch: Equatable, Sendable {
     public let source: TouchSource
     public let at: Date
     public let hueIndex: Int
+    public let shade: Int
     public let agentTitle: String?
-    public init(seq: UInt64, agent: AgentID, path: RepoPath, worktree: String?, kind: TouchKind, scope: TouchScope, source: TouchSource, at: Date, hueIndex: Int = 0, agentTitle: String? = nil) {
+    public init(seq: UInt64, agent: AgentID, path: RepoPath, worktree: String?, kind: TouchKind, scope: TouchScope, source: TouchSource, at: Date, hueIndex: Int = 0, shade: Int = 0, agentTitle: String? = nil) {
         self.seq = seq; self.agent = agent; self.path = path; self.worktree = worktree; self.kind = kind
-        self.scope = scope; self.source = source; self.at = at; self.hueIndex = hueIndex; self.agentTitle = agentTitle
+        self.scope = scope; self.source = source; self.at = at; self.hueIndex = hueIndex; self.shade = shade; self.agentTitle = agentTitle
     }
 }
 
@@ -83,6 +84,8 @@ public struct AgentSnapshot: Equatable, Sendable, Identifiable {
     public let title: String
     public let status: Status
     public let hueIndex: Int
+    /// 0 for a main session; a subagent's member shade of its session's hue family.
+    public let shade: Int
     public let branch: String?
     public let worktree: String?
     public let firstSeen: Date
@@ -95,8 +98,8 @@ public struct AgentSnapshot: Equatable, Sendable, Identifiable {
     public let context: ContextUsage?
     public let tokens: TokenTotals?
 
-    public init(id: AgentID, kind: AgentKind, title: String, status: Status, hueIndex: Int, branch: String?, worktree: String?, firstSeen: Date, lastActivity: Date, endedAt: Date?, touchCount: Int, lastCommandLabel: String? = nil, lastMilestone: Milestone? = nil, model: String? = nil, context: ContextUsage? = nil, tokens: TokenTotals? = nil) {
-        self.id = id; self.kind = kind; self.title = title; self.status = status; self.hueIndex = hueIndex
+    public init(id: AgentID, kind: AgentKind, title: String, status: Status, hueIndex: Int, branch: String?, worktree: String?, firstSeen: Date, lastActivity: Date, endedAt: Date?, touchCount: Int, lastCommandLabel: String? = nil, lastMilestone: Milestone? = nil, model: String? = nil, context: ContextUsage? = nil, tokens: TokenTotals? = nil, shade: Int = 0) {
+        self.id = id; self.kind = kind; self.title = title; self.status = status; self.hueIndex = hueIndex; self.shade = shade
         self.branch = branch; self.worktree = worktree; self.firstSeen = firstSeen; self.lastActivity = lastActivity
         self.endedAt = endedAt; self.touchCount = touchCount
         self.lastCommandLabel = lastCommandLabel; self.lastMilestone = lastMilestone

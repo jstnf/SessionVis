@@ -6,7 +6,7 @@ import SessionVisCore
 @MainActor
 enum SceneRenderer {
     static let labelBudget = 80
-    private struct TintKey: Hashable { let hue: Int; let level: Int }
+    private struct TintKey: Hashable { let hue: Int; let shade: Int; let level: Int }
     private static let tintLevels = 8
     static let mono9 = Font.system(size: 9, design: .monospaced)
     static let mono10 = Font.system(size: 10, design: .monospaced)
@@ -67,8 +67,8 @@ enum SceneRenderer {
             if let alpha = sim.deathAlpha(node.path) {
                 fading.append((seg, Double(alpha)))
             } else if let t = sim.edgeTint(node.path), case let level = Int((t.strength * CGFloat(tintLevels)).rounded()), level > 0 {
-                if ghost { ghostLit[TintKey(hue: t.hueIndex, level: level), default: Path()].addPath(seg) }
-                else { lit[TintKey(hue: t.hueIndex, level: level), default: Path()].addPath(seg) }
+                if ghost { ghostLit[TintKey(hue: t.hueIndex, shade: t.shade, level: level), default: Path()].addPath(seg) }
+                else { lit[TintKey(hue: t.hueIndex, shade: t.shade, level: level), default: Path()].addPath(seg) }
             } else if ghost {
                 if sim.focusMode, !sim.isActive(node.path) { faintGhostPath.addPath(seg) } else { ghostPath.addPath(seg) }
             } else if sim.focusMode, !node.isDirectory, !sim.isActive(node.path) {
@@ -83,12 +83,12 @@ enum SceneRenderer {
         ctx.stroke(faintGhostPath, with: .color(Palette.edge.opacity(Constants.focusInactiveAlpha)), style: StrokeStyle(lineWidth: Constants.edgeWidth, dash: Constants.ghostDash))
         for (key, seg) in lit {
             let strength = Double(key.level) / Double(tintLevels)
-            ctx.stroke(seg, with: .color(Palette.mix(Palette.edgeRGB, HuePalette.hue(key.hue), strength)),
+            ctx.stroke(seg, with: .color(Palette.mix(Palette.edgeRGB, HuePalette.hue(key.hue, shade: key.shade), strength)),
                        lineWidth: Constants.edgeWidth + (Constants.litEdgeWidth - Constants.edgeWidth) * CGFloat(strength))
         }
         for (key, seg) in ghostLit {
             let strength = Double(key.level) / Double(tintLevels)
-            ctx.stroke(seg, with: .color(Palette.mix(Palette.edgeRGB, HuePalette.hue(key.hue), strength)),
+            ctx.stroke(seg, with: .color(Palette.mix(Palette.edgeRGB, HuePalette.hue(key.hue, shade: key.shade), strength)),
                        style: StrokeStyle(lineWidth: Constants.edgeWidth + (Constants.litEdgeWidth - Constants.edgeWidth) * CGFloat(strength), dash: Constants.ghostDash))
         }
         for (seg, alpha) in fading { ctx.stroke(seg, with: .color(Palette.edge.opacity(alpha)), lineWidth: Constants.edgeWidth) }
@@ -112,12 +112,12 @@ enum SceneRenderer {
             if scale <= 0 { continue }
             let r: CGFloat = (node.isDirectory ? 4 : 2.5) * scale
             if let h = sim.heat[node.path], h.value > 0 {
-                glow(&ctx, at: p, radius: r + 4 + 6 * h.value, color: Palette.hue(h.hueIndex), centerAlpha: 0.35 + 0.6 * h.value)
+                glow(&ctx, at: p, radius: r + 4 + 6 * h.value, color: Palette.hue(h.hueIndex, shade: h.shade), centerAlpha: 0.35 + 0.6 * h.value)
             }
             let rect = CGRect(x: p.x - r, y: p.y - r, width: 2 * r, height: 2 * r)
             if node.isDirectory {
                 if let t = sim.tint(node.path), case let level = Int((t.strength * CGFloat(tintLevels)).rounded()), level > 0 {
-                    tinted[TintKey(hue: t.hueIndex, level: level), default: Path()].addEllipse(in: rect)
+                    tinted[TintKey(hue: t.hueIndex, shade: t.shade, level: level), default: Path()].addEllipse(in: rect)
                 } else { bright.addEllipse(in: rect) }
                 continue
             }
@@ -125,14 +125,14 @@ enum SceneRenderer {
                                   width: 2 * Constants.ghostRingRadius, height: 2 * Constants.ghostRingRadius)
             if node.isGhost {
                 if let t = sim.tint(node.path), case let level = Int((t.strength * CGFloat(tintLevels)).rounded()), level > 0 {
-                    ghostTinted[TintKey(hue: t.hueIndex, level: level), default: Path()].addEllipse(in: ringRect)
+                    ghostTinted[TintKey(hue: t.hueIndex, shade: t.shade, level: level), default: Path()].addEllipse(in: ringRect)
                 } else if sim.focusMode, !sim.isActive(node.path) { faintGhostRings.addEllipse(in: ringRect)
                 } else { ghostRings.addEllipse(in: ringRect) }
                 continue
             }
             if sim.isLanding(node.path) { landingRings.append((Path(ellipseIn: ringRect), Double(1 - scale))) }
             if let t = sim.tint(node.path), case let level = Int((t.strength * CGFloat(tintLevels)).rounded()), level > 0 {
-                tinted[TintKey(hue: t.hueIndex, level: level), default: Path()].addEllipse(in: rect)
+                tinted[TintKey(hue: t.hueIndex, shade: t.shade, level: level), default: Path()].addEllipse(in: rect)
             } else if sim.focusMode {
                 // Activity decides; a fresh touch is tinted above and so bright before the next re-judgement.
                 if sim.isActive(node.path) { bright.addEllipse(in: rect) } else {
@@ -145,12 +145,12 @@ enum SceneRenderer {
         ctx.fill(faint, with: .color(Palette.node.opacity(Constants.focusInactiveAlpha)))
         ctx.fill(bright, with: .color(Palette.node))
         for (key, path) in tinted {
-            ctx.fill(path, with: .color(Palette.mix(Palette.nodeRGB, HuePalette.hue(key.hue), Double(key.level) / Double(tintLevels))))
+            ctx.fill(path, with: .color(Palette.mix(Palette.nodeRGB, HuePalette.hue(key.hue, shade: key.shade), Double(key.level) / Double(tintLevels))))
         }
         ctx.stroke(ghostRings, with: .color(Palette.ghost), lineWidth: Constants.ghostRingWidth)
         ctx.stroke(faintGhostRings, with: .color(Palette.ghost.opacity(Constants.focusInactiveAlpha)), lineWidth: Constants.ghostRingWidth)
         for (key, path) in ghostTinted {
-            ctx.stroke(path, with: .color(Palette.mix(Palette.nodeRGB, HuePalette.hue(key.hue), Double(key.level) / Double(tintLevels))), lineWidth: Constants.ghostRingWidth)
+            ctx.stroke(path, with: .color(Palette.mix(Palette.nodeRGB, HuePalette.hue(key.hue, shade: key.shade), Double(key.level) / Double(tintLevels))), lineWidth: Constants.ghostRingWidth)
         }
         for (path, alpha) in landingRings { ctx.stroke(path, with: .color(Palette.ghost.opacity(alpha)), lineWidth: Constants.ghostRingWidth) }
     }
@@ -198,7 +198,7 @@ enum SceneRenderer {
         for beam in sim.beams {
             guard let av = sim.avatars[beam.from], let fw = sim.position(of: beam.to) else { continue }
             let from = sim.worldToScreen(av.position), to = sim.worldToScreen(fw)
-            let color = av.isSubagent ? Palette.tint(beam.hueIndex) : Palette.hue(beam.hueIndex)
+            let color = av.isSubagent ? Palette.subagent(beam.hueIndex, shade: beam.shade) : Palette.hue(beam.hueIndex, shade: beam.shade)
             var path = Path()
             path.move(to: from)
             path.addLine(to: to)
@@ -212,7 +212,7 @@ enum SceneRenderer {
     private static func drawRipples(_ sim: Simulation, _ ctx: inout GraphicsContext) {
         for r in sim.ripples {
             guard let av = sim.avatars[r.agent], av.alpha > Constants.effectMinAlpha else { continue }
-            let color = av.isSubagent ? Palette.tint(r.hueIndex) : Palette.hue(r.hueIndex)
+            let color = av.isSubagent ? Palette.subagent(r.hueIndex, shade: r.shade) : Palette.hue(r.hueIndex, shade: r.shade)
             for (path, t) in sim.edgeTints where t.toucher == r.agent {
                 guard let parent = path.parent, let a = sim.position(of: parent), let b = sim.position(of: path) else { continue }
                 let u = r.progress * CGFloat(r.maxDepth) - CGFloat(path.depth - 1)
@@ -228,7 +228,7 @@ enum SceneRenderer {
     private static func drawParticles(_ sim: Simulation, _ ctx: inout GraphicsContext) {
         for p in sim.particles {
             let s = sim.worldToScreen(p.position)
-            ctx.fill(circle(s, 1.4), with: .color(Palette.hue(p.hueIndex).opacity(p.life * 0.8)))
+            ctx.fill(circle(s, 1.4), with: .color(Palette.hue(p.hueIndex, shade: p.shade).opacity(p.life * 0.8)))
         }
     }
 
@@ -238,7 +238,7 @@ enum SceneRenderer {
             guard let av = sim.avatars[id], av.isSubagent, av.alpha > 0 else { continue }
             let p = sim.worldToScreen(av.position)
             let r = Constants.orbRadiusSubagent * av.renderScale
-            let tint = Palette.tint(av.hueIndex)
+            let tint = Palette.subagent(av.hueIndex, shade: av.shade)
             glow(&ctx, at: p, radius: 3 * r, color: tint, centerAlpha: 0.55 * av.alpha)
             ctx.fill(circle(p, r), with: .color(tint.opacity(av.alpha)))
             if let fill = av.contextFill {
@@ -277,7 +277,7 @@ enum SceneRenderer {
             let c = sim.worldToScreen(av.position)
             let base: CGFloat = av.isSubagent ? 5.5 : 11
             let r = base + p.ringProgress * Constants.pulseRadius
-            let color = (av.isSubagent ? Palette.tint(p.hueIndex) : Palette.hue(p.hueIndex)).opacity(0.55 * Double(p.ringAlpha))
+            let color = (av.isSubagent ? Palette.subagent(p.hueIndex, shade: p.shade) : Palette.hue(p.hueIndex, shade: p.shade)).opacity(0.55 * Double(p.ringAlpha))
             let width: CGFloat = p.milestone == nil ? 1 : 1.6
             ctx.stroke(circle(c, r), with: .color(color), lineWidth: width)
             if p.milestone == .push { ctx.stroke(circle(c, r * 0.8), with: .color(color), lineWidth: width) }
@@ -296,7 +296,7 @@ enum SceneRenderer {
             let rect = CGRect(x: center.x - size.width / 2 - 5, y: center.y - 7, width: size.width + 10, height: 14)
             let pill = Path(roundedRect: rect, cornerRadius: 4)
             ctx.fill(pill, with: .color(Palette.rowHighlight.opacity(0.95 * alpha)))
-            ctx.stroke(pill, with: .color(Palette.hue(av.hueIndex).opacity(0.9 * alpha)), lineWidth: 0.8)
+            ctx.stroke(pill, with: .color(Palette.hue(av.hueIndex, shade: av.shade).opacity(0.9 * alpha)), lineWidth: 0.8)
             ctx.draw(text.foregroundStyle(Palette.text.opacity(alpha)), at: center, anchor: .center)
         }
     }
@@ -336,7 +336,7 @@ enum SceneRenderer {
             guard let av = sim.avatars[id], av.alpha > Constants.effectMinAlpha else { continue }
             let p = sim.worldToScreen(av.position)
             if av.isSubagent {
-                ctx.draw(Text(av.title).font(mono9).foregroundStyle(Palette.tint(av.hueIndex).opacity(0.85 * av.alpha * av.scale)),
+                ctx.draw(Text(av.title).font(mono9).foregroundStyle(Palette.subagent(av.hueIndex, shade: av.shade).opacity(0.85 * av.alpha * av.scale)),
                          at: CGPoint(x: p.x, y: p.y + 15), anchor: .top)
             } else {
                 ctx.draw(Text(av.title).font(mono10).foregroundStyle(Palette.text.opacity(av.alpha)),
@@ -349,7 +349,7 @@ enum SceneRenderer {
             let i = stack[p.agent, default: 0]
             stack[p.agent] = i + 1
             let o = sim.worldToScreen(av.position)
-            let color = (av.isSubagent ? Palette.tint(p.hueIndex) : Palette.hue(p.hueIndex)).opacity(0.85 * Double(p.labelAlpha) * av.alpha)
+            let color = (av.isSubagent ? Palette.subagent(p.hueIndex, shade: p.shade) : Palette.hue(p.hueIndex, shade: p.shade)).opacity(0.85 * Double(p.labelAlpha) * av.alpha)
             ctx.draw(Text(p.label).font(mono9).foregroundStyle(color), at: CGPoint(x: o.x + 16, y: o.y - 4 - CGFloat(13 * i)), anchor: .leading)
         }
     }

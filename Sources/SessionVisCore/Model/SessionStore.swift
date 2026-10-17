@@ -16,6 +16,10 @@ public actor SessionStore {
         var firstPrompt: String?
         var machine: StatusMachine
         var hueIndex: Int
+        /// Supplied by the source: the rank of the subagent's transcript among its session's; mains stay 0.
+        var ordinal = 0
+        /// Derived from `ordinal` and the immediate parent's shade; mains stay 0.
+        var shade = 0
         var branch: String?
         var worktree: String?
         var cwd: String?
@@ -96,8 +100,15 @@ public actor SessionStore {
         switch event {
         case .sessionAppeared(let sid, _):
             _ = ensureMain(sid)
-        case .subagentAppeared(let sid, let aid, let meta):
-            ensureSubagent(sessionId: sid, agentId: aid, meta: meta)
+        case .subagentAppeared(let sid, let aid, let meta, let ordinal):
+            ensureSubagent(sessionId: sid, agentId: aid, meta: meta, ordinal: ordinal)
+        case .subagentOrdinal(_, let aid, let ordinal):
+            let id = AgentID(aid)
+            if var rec = agents[id], rec.ordinal != ordinal, ordinal > 0 {
+                rec.ordinal = ordinal
+                agents[id] = rec
+                refreshShade(of: id, force: true)
+            }
         case .line(let sid, let aid, let line):
             applyLine(sessionId: sid, agentId: aid, line: line)
         case .hook(let hook):
@@ -175,7 +186,7 @@ public actor SessionStore {
         return id
     }
 
-    private func ensureSubagent(sessionId: String, agentId: String, meta: SubagentMeta?, at t: Date? = nil) {
+    private func ensureSubagent(sessionId: String, agentId: String, meta: SubagentMeta?, ordinal: Int = 0, at t: Date? = nil) {
         let mainId = ensureMain(sessionId, at: t)
         let id = AgentID(agentId)
         let parent = meta?.toolUseId.flatMap { toolUseOwner[$0] } ?? mainId
@@ -186,11 +197,16 @@ public actor SessionStore {
             existing.kind = kind
             existing.hueIndex = agents[parent]?.hueIndex ?? existing.hueIndex
             existing.metaToolUseId = meta?.toolUseId ?? existing.metaToolUseId
+            if ordinal > 0 { existing.ordinal = ordinal }
             agents[id] = existing
+            refreshShade(of: id)
         } else {
             let now = clock()
+            // Without a source ordinal (a record first seen from a line or hook) take the next one after its siblings.
+            let resolved = ordinal > 0 ? ordinal : nextOrdinal(under: lineageRoot(of: parent))
             agents[id] = AgentRecord(id: id, sessionId: sessionId, kind: kind, machine: StatusMachine(at: .distantPast),
-                                     hueIndex: agents[parent]?.hueIndex ?? 0, firstSeen: now, metaToolUseId: meta?.toolUseId)
+                                     hueIndex: agents[parent]?.hueIndex ?? 0, ordinal: resolved, firstSeen: now, metaToolUseId: meta?.toolUseId)
+            refreshShade(of: id)
         }
         if let tid = meta?.toolUseId { subagentByToolUseId[tid] = id }
     }
@@ -250,6 +266,7 @@ public actor SessionStore {
                     childRec.kind = .subagent(parent: id, description: d, agentType: at, model: m)
                     childRec.hueIndex = rec.hueIndex
                     agents[child] = childRec
+                    refreshShade(of: child)
                 }
             }
             if let kind = TouchKind.forTool(name) {
@@ -355,6 +372,30 @@ public actor SessionStore {
         return true
     }
 
+    /// One past the highest ordinal held by a subagent under `root`.
+    private func nextOrdinal(under root: AgentID) -> Int {
+        (agents.values.filter { $0.parentId != nil && lineageRoot(of: $0.id) == root }.map(\.ordinal).max() ?? 0) + 1
+    }
+
+    /// Recomputes `id`'s shade from its ordinal and its immediate parent's shade, then its children's, so the result
+    /// depends only on the final tree.
+    private func refreshShade(of id: AgentID, depth: Int = 0, force: Bool = false) {
+        guard depth < Constants.maxAgentDepth, var rec = agents[id], let parent = rec.parentId else { return }
+        let parentShade = agents[parent]?.parentId != nil ? agents[parent]?.shade ?? 0 : 0
+        let shade = HuePalette.shade(forOrdinal: rec.ordinal, avoiding: parentShade)
+        guard force || shade != rec.shade else { return }
+        rec.shade = shade
+        agents[id] = rec
+        for (childId, child) in agents where child.parentId == id { refreshShade(of: childId, depth: depth + 1) }
+    }
+
+    /// The main session at the top of `id`'s parent chain (`id` itself when it has no parent).
+    private func lineageRoot(of id: AgentID) -> AgentID {
+        var current = id, depth = 0
+        while depth < Constants.maxAgentDepth, let parent = agents[current]?.parentId { current = parent; depth += 1 }
+        return current
+    }
+
     private func closeCommand(_ toolId: String, of agent: AgentID, at t: Date) {
         guard openCommands[agent]?.removeValue(forKey: toolId) != nil else { return }
         recentCommandCompletions[agent] = max(recentCommandCompletions[agent] ?? t, t)
@@ -414,7 +455,7 @@ public actor SessionStore {
                               lastCommandLabel: r.lastCommandLabel, lastMilestone: r.lastMilestone,
                               model: r.model ?? r.metaModel,
                               context: r.contextTokens.map { ContextUsage(tokens: TokenFormat.quantise($0), window: r.window) },
-                              tokens: r.lastUsage == nil ? nil : TokenTotals(input: TokenFormat.quantise(r.inputTotal), output: TokenFormat.quantise(r.outputTotal)))
+                              tokens: r.lastUsage == nil ? nil : TokenTotals(input: TokenFormat.quantise(r.inputTotal), output: TokenFormat.quantise(r.outputTotal)), shade: r.shade)
             }
         let now = clock()
         lastFileTouch = lastFileTouch.filter { now.timeIntervalSince($0.value) <= Constants.focusActiveWindow }
@@ -489,7 +530,7 @@ public actor SessionStore {
     /// Appends a touch for `rec`, bumps its count and trims the ring.
     private func record(path: RepoPath, worktree: String?, kind: TouchKind, scope: TouchScope, source: TouchSource, at t: Date, for rec: inout AgentRecord) {
         touches.append(Touch(seq: nextSeq, agent: rec.id, path: path, worktree: worktree, kind: kind, scope: scope, source: source,
-                             at: t, hueIndex: rec.hueIndex, agentTitle: rec.title))
+                             at: t, hueIndex: rec.hueIndex, shade: rec.shade, agentTitle: rec.title))
         nextSeq += 1
         rec.touchCount += 1
         if scope == .file { lastFileTouch[path] = max(lastFileTouch[path] ?? .distantPast, t) }

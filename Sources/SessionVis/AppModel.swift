@@ -440,42 +440,45 @@ final class AppModel {
     }
 
     /// Tooltip text for the current hover.
-    func tooltipLines() -> [String] {
+    func tooltipLines() -> [TooltipLine] {
         guard let hover else { return [] }
         let sim = box.simulation
         switch hover {
         case .node(let path):
             guard let node = sim.tree.node(path) else { return [] }
             if node.isDirectory {
-                var lines = [path.isRoot ? "/" : path.string, "\(node.leafCount) files"]
+                var lines = [TooltipLine(text: path.isRoot ? "/" : path.string), TooltipLine(text: "\(node.leafCount) files")]
                 if let t = sim.tints[path] {
                     let title = snapshot.agents.first { $0.id == t.toucher }?.title ?? t.toucherTitle ?? t.toucher.raw
-                    lines.append("read by \(title) · \(Int(Date().timeIntervalSince(t.touchedAt)))s ago" + (t.source.map { " · \($0.label)" } ?? ""))
+                    lines.append(TooltipLine(text: "read by \(title) · \(Int(Date().timeIntervalSince(t.touchedAt)))s ago" + (t.source.map { " · \($0.label)" } ?? ""),
+                                             swatch: Palette.hue(t.hueIndex, shade: t.shade)))
                 }
                 return lines
             }
-            var lines = [path.string]
+            var lines = [TooltipLine(text: path.string)]
             if let t = sim.tints[path] {
                 let title = snapshot.agents.first { $0.id == t.toucher }?.title ?? t.toucherTitle ?? t.toucher.raw
                 let ago = Int(Date().timeIntervalSince(t.touchedAt))
-                lines.append("last touched by \(title) · \(ago)s ago" + (t.source.map { " · \($0.label)" } ?? ""))
+                lines.append(TooltipLine(text: "last touched by \(title) · \(ago)s ago" + (t.source.map { " · \($0.label)" } ?? ""),
+                                         swatch: Palette.hue(t.hueIndex, shade: t.shade)))
             }
             let origins = node.origins.compactMap { if case .worktree(let n) = $0 { return n } else { return nil } }.sorted()
             if sim.tree.isGhost(path), !origins.isEmpty {
-                lines.append("only in worktree\(origins.count == 1 ? "" : "s") \(origins.joined(separator: ", "))")
+                lines.append(TooltipLine(text: "only in worktree\(origins.count == 1 ? "" : "s") \(origins.joined(separator: ", "))"))
             } else if let wt = snapshot.recentTouches.last(where: { $0.path == path })?.worktree {
-                lines.append("in worktree \(wt)")
+                lines.append(TooltipLine(text: "in worktree \(wt)"))
             }
             return lines
         case .avatar(let id):
             guard let a = snapshot.agents.first(where: { $0.id == id }) else { return [] }
-            var lines = [a.title, a.status.word]
-            if let b = a.branch { lines.append(b) }
-            if let w = a.worktree { lines.append("worktree \(w)") }
-            lines.append("\(a.touchCount) touches")
-            if let c = a.context { lines.append("context \(c.line)") }
-            if let t = a.tokens { lines.append(t.line) }
-            if let m = a.model { lines.append(m) }
+            let own = a.isSubagent ? Palette.subagent(a.hueIndex, shade: a.shade) : Palette.hue(a.hueIndex)
+            var lines = [TooltipLine(text: a.title, swatch: own), TooltipLine(text: a.status.word)]
+            if let b = a.branch { lines.append(TooltipLine(text: b)) }
+            if let w = a.worktree { lines.append(TooltipLine(text: "worktree \(w)")) }
+            lines.append(TooltipLine(text: "\(a.touchCount) touches"))
+            if let c = a.context { lines.append(TooltipLine(text: "context \(c.line)")) }
+            if let t = a.tokens { lines.append(TooltipLine(text: t.line)) }
+            if let m = a.model { lines.append(TooltipLine(text: m)) }
             return lines
         }
     }

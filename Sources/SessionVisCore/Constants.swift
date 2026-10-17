@@ -139,4 +139,15 @@ public enum Constants {
     public static let focusInactiveAlpha: Double = 0.15
     /// Radius of an inactive file's dot in screen points (unlike `focusInactiveSpacing`, which is world units).
     public static let focusInactiveRadius: CGFloat = 1.0
+    /// Subagents take a shade of their session's hue family, by the rank of their transcript among the session's, cycling through these. Rotations stay
+    /// within ±5° because the orange and yellow families sit 15° apart; the shades differ mainly in saturation and brightness.
+    public static let subagentShades: [HueShade] = [
+        HueShade(hueDegrees: -5, saturation: 0.72, brightness: 1.00),   // paler
+        HueShade(hueDegrees: 5, saturation: 1.00, brightness: 0.80),    // darker
+        HueShade(hueDegrees: -3, saturation: 0.50, brightness: 0.92),   // pastel
+        HueShade(hueDegrees: 3, saturation: 1.15, brightness: 0.68),    // deep
+    ]
+    public static var subagentShadeCount: Int { subagentShades.count }
+    /// How far up a parent chain the store walks before giving up.
+    public static let maxAgentDepth = 16
 }
