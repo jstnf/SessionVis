@@ -14,6 +14,11 @@ public enum TranscriptEvent: Equatable, Sendable {
     case interrupted
     /// The parent's `<task-notification>` record for a background task; `taskId` is the subagent id for Agent tasks.
     case taskNotification(taskId: String, status: String)
+    /// One assistant record's token accounting. A response split into several records repeats the id; the last repeat carries the full output count.
+    /// `model` is nil when the record names none.
+    case usage(messageID: String, model: String?, input: Int, output: Int, cacheRead: Int, cacheCreate: Int)
+    /// A `compact_boundary` system record: the context size before and after compaction.
+    case compacted(pre: Int, post: Int)
 }
 
 public struct TranscriptLine: Equatable, Sendable {

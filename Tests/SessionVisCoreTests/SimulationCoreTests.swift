@@ -6,10 +6,10 @@ import Testing
 enum SimFixtures {
     static let t0 = Date(timeIntervalSince1970: 1_000_000)
     static func tree() -> FileTree { FileTree(files: ["A/a.swift", "A/b.swift", "B/c.swift"].map(RepoPath.init(string:))) }
-    static func agent(_ id: String, parent: String? = nil, status: Status = .working, hue: Int = 0) -> AgentSnapshot {
+    static func agent(_ id: String, parent: String? = nil, status: Status = .working, hue: Int = 0, context: ContextUsage? = nil) -> AgentSnapshot {
         let kind: AgentKind = parent.map { .subagent(parent: AgentID($0), description: "sub \(id)", agentType: nil, model: nil) } ?? .main
         return AgentSnapshot(id: AgentID(id), kind: kind, title: id, status: status, hueIndex: hue, branch: nil, worktree: nil,
-                             firstSeen: t0, lastActivity: t0, endedAt: nil, touchCount: 0)
+                             firstSeen: t0, lastActivity: t0, endedAt: nil, touchCount: 0, context: context)
     }
     static func touch(_ seq: UInt64, _ agent: String, _ path: String, kind: TouchKind = .write, scope: TouchScope = .file, source: TouchSource = .tool("Edit"), at: Date = t0, hue: Int = 0, title: String? = nil) -> Touch {
         Touch(seq: seq, agent: AgentID(agent), path: RepoPath(string: path), worktree: nil, kind: kind, scope: scope, source: source, at: at, hueIndex: hue, agentTitle: title)
@@ -224,5 +224,17 @@ enum SimFixtures {
         var fresh = Simulation(tree: F.tree())
         fresh.apply(snapshot: StoreSnapshot(agents: [F.agent("s1", status: .ended)]), now: F.t0)
         #expect(fresh.avatars.isEmpty && fresh.avatarOrder.isEmpty)
+    }
+
+    @Test func avatarContextFillFollowsTheSnapshot() {
+        var sim = Simulation(tree: F.tree())
+        sim.apply(snapshot: StoreSnapshot(agents: [F.agent("s1")]), now: F.t0)
+        #expect(sim.avatars[s1]?.contextFill == nil)
+        sim.apply(snapshot: StoreSnapshot(agents: [F.agent("s1", context: ContextUsage(tokens: 140_000, window: 1_000_000))]), now: F.t0)
+        #expect(sim.avatars[s1]?.contextFill == 0.14)
+        sim.apply(snapshot: StoreSnapshot(agents: [F.agent("s1", context: ContextUsage(tokens: 140_000, window: nil))]), now: F.t0)
+        #expect(sim.avatars[s1]?.contextFill == nil)
+        sim.apply(snapshot: StoreSnapshot(agents: [F.agent("s1"), F.agent("A", parent: "s1", context: ContextUsage(tokens: 50_000, window: 200_000))]), now: F.t0)
+        #expect(sim.avatars[AgentID("A")]?.contextFill == 0.25)   // spawned with its fill
     }
 }

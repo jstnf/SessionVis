@@ -110,4 +110,19 @@ public enum Constants {
     public static let terminalStartTolerance: TimeInterval = 60
     /// How long the session list shows why a terminal could not be opened.
     public static let terminalMessageDuration: TimeInterval = 4
+    /// Context window per model-id prefix, first match wins; an id matching none has no known window.
+    public static let contextWindows: [(prefix: String, tokens: Int)] = [("claude-haiku-4-5", 200_000), ("claude-", 1_000_000)]
+    /// When an observed context exceeds its model's window, the window is raised to the first of these that holds it.
+    public static let contextWindowTiers = [200_000, 1_000_000]
+    /// Parsed token counts are clamped to 0...this; anything larger is a malformed record.
+    public static let tokenCountCap = 1_000_000_000_000
+    /// Published token counts are rounded down to a multiple of this, so they stay stable to the hundred.
+    public static let tokenQuantum = 100
+    /// Context fill at which the ring and the list line turn amber, then red; below the minimum the ring is not drawn.
+    public static let contextWarnFill = 0.8
+    public static let contextDangerFill = 0.92
+    public static let contextRingMinFill = 0.05
+    /// The context ring sits this far outside the orb's edge.
+    public static let contextRingGap: CGFloat = 3
+    public static let contextRingWidth: CGFloat = 1.5
 }

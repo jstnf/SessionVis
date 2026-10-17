@@ -47,7 +47,7 @@ public struct StatusMachine: Equatable, Sendable {
         case .interrupted:
             pending.removeAll()
             set(.idle(preview: nil), at: t)
-        case .title, .relocated, .worktree, .taskNotification:
+        case .title, .relocated, .worktree, .taskNotification, .usage, .compacted:
             break
         }
     }

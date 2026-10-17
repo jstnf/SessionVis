@@ -459,6 +459,9 @@ final class AppModel {
             if let b = a.branch { lines.append(b) }
             if let w = a.worktree { lines.append("worktree \(w)") }
             lines.append("\(a.touchCount) touches")
+            if let c = a.context { lines.append("context \(c.line)") }
+            if let t = a.tokens { lines.append(t.line) }
+            if let m = a.model { lines.append(m) }
             return lines
         }
     }

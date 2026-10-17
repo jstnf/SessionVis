@@ -48,6 +48,10 @@ public enum TranscriptParser {
         case "queue-operation":
             guard obj["operation"] as? String == "enqueue", let text = obj["content"] as? String else { return [] }
             return wrap(promptIfAllowed(text, isMeta: true))   // isMeta: a queued user prompt must not count as a prompt
+        case "system":
+            guard obj["subtype"] as? String == "compact_boundary" else { return [] }
+            let meta = obj["compactMetadata"] as? [String: Any] ?? [:]
+            return wrap([.compacted(pre: tokenCount(meta["preTokens"]), post: tokenCount(meta["postTokens"]))])
         default:
             return []
         }
@@ -128,7 +132,26 @@ public enum TranscriptParser {
                 continue
             }
         }
+        if let usage = usageEvent(message) { out.append(usage) }
         if endOfTurn { out.append(.turnEnded) }
         return out
+    }
+
+    /// The record's token accounting; nil for the synthetic record Claude Code writes on an API failure, or without an id or a usage object.
+    /// A record without a model still yields the event, with a nil model.
+    private static func usageEvent(_ message: [String: Any]) -> TranscriptEvent? {
+        guard let id = message["id"] as? String, let usage = message["usage"] as? [String: Any] else { return nil }
+        let model = message["model"] as? String
+        if model == "<synthetic>" { return nil }
+        func int(_ key: String) -> Int { tokenCount(usage[key]) }
+        return .usage(messageID: id, model: model, input: int("input_tokens"), output: int("output_tokens"),
+                      cacheRead: int("cache_read_input_tokens"), cacheCreate: int("cache_creation_input_tokens"))
+    }
+
+    /// A token count: a JSON integer (or a float with an integral value) clamped to 0...`Constants.tokenCountCap`;
+    /// anything else, booleans and strings included, reads as 0.
+    private static func tokenCount(_ value: Any?) -> Int {
+        guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(), let n = value as? Int else { return 0 }
+        return min(max(n, 0), Constants.tokenCountCap)
     }
 }

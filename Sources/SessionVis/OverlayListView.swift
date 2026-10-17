@@ -114,6 +114,9 @@ private struct SessionRow: View {
                     if selected { followGlyph }
                 }
                 Text(statusLine).font(.system(size: 10, design: .monospaced)).foregroundStyle(Palette.status(agent.status))
+                if let c = agent.context {
+                    Text(c.line).font(.system(size: 10, design: .monospaced)).foregroundStyle(Palette.contextText(fill: c.fill))
+                }
                 if case .working = agent.status, let cmd = agent.lastCommandLabel {
                     Text("$ \(cmd)").font(.system(size: 10, design: .monospaced)).foregroundStyle(Palette.textSecondary).lineLimit(1).truncationMode(.tail)
                 }
@@ -171,6 +174,10 @@ private struct SubagentRow: View {
                 HStack(spacing: 4) {
                     Text(agent.title).font(.system(size: 10, design: .monospaced)).foregroundStyle(Palette.textSecondary).lineLimit(1).truncationMode(.tail)
                     if selected { followGlyph }
+                }
+                Text(agent.title).font(.system(size: 10, design: .monospaced)).foregroundStyle(Palette.textSecondary).lineLimit(1).truncationMode(.tail)
+                if let c = agent.context {
+                    Text(c.line).font(.system(size: 9, design: .monospaced)).foregroundStyle(Palette.contextText(fill: c.fill)).lineLimit(1)
                 }
                 if let milestone = agent.lastMilestone {
                     Text(milestone.line).font(.system(size: 9, design: .monospaced)).foregroundStyle(Palette.textSecondary)

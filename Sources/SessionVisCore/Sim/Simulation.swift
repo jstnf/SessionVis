@@ -22,6 +22,8 @@ public struct AvatarState: Equatable, Sendable {
     public var badgeLift: TimeInterval?
     public var badgeAlpha: CGFloat { badgeLift.map { max(0, 1 - CGFloat($0 / Constants.badgeLiftDuration)) } ?? 1 }
     public var badgeRise: CGFloat { badgeLift.map { min(1, CGFloat($0 / Constants.badgeLiftDuration)) } ?? 0 }
+    /// Context fill in 0…1+ for the ring around the orb; nil when the model's window is unknown.
+    public var contextFill: CGFloat?
 }
 
 public struct Camera: Equatable, Sendable {
@@ -186,6 +188,7 @@ public struct Simulation: Sendable {
             seen.insert(a.id)
             if var av = avatars[a.id] {
                 av.status = a.status; av.title = a.title; av.hueIndex = a.hueIndex; av.parent = a.parent
+                av.contextFill = a.context?.fill.map { CGFloat($0) }
                 avatars[a.id] = av
             } else if a.status != .ended {
                 avatars[a.id] = spawnAvatar(for: a)
@@ -247,7 +250,8 @@ public struct Simulation: Sendable {
         if a.isSubagent, let p = a.parent, let parentAvatar = avatars[p] { pos = parentAvatar.position }
         return AvatarState(id: a.id, position: pos, target: pos, anchor: pos, scale: 0, renderScale: 0, alpha: 1,
                            hueIndex: a.hueIndex, isSubagent: a.isSubagent, parent: a.parent, status: a.status,
-                           title: a.title, spawnAngle: angle, lastTouchPath: nil, badge: nil, badgeSeq: nil, badgeLift: nil)
+                           title: a.title, spawnAngle: angle, lastTouchPath: nil, badge: nil, badgeSeq: nil, badgeLift: nil,
+                           contextFill: a.context?.fill.map { CGFloat($0) })
     }
 
     /// Records touches for positioning and fires effects. The first call is a priming pass (history: heat and tint, no beams).

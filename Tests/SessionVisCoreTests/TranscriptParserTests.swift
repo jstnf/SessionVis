@@ -138,4 +138,33 @@ import Testing
         guard case .toolResult(_, let text) = try #require(try events(big).first) else { Issue.record("not a toolResult"); return }
         #expect(text?.count == Constants.toolResultTextLimit)
     }
+
+    @Test func assistantRecordYieldsUsageAfterItsBlocksAndBeforeTurnEnd() throws {
+        let line = #"{"type":"assistant","timestamp":"2026-10-17T05:39:05.246Z","message":{"id":"msg_011","model":"claude-fable-5-1","role":"assistant","stop_reason":"end_turn","usage":{"input_tokens":2,"cache_creation_input_tokens":17655,"cache_read_input_tokens":30660,"output_tokens":222,"output_tokens_details":{"thinking_tokens":130},"service_tier":"standard"},"content":[{"type":"text","text":"done"}]}}"#
+        #expect(try events(line) == [.assistantText(text: "done", endOfTurn: true),
+                                     .usage(messageID: "msg_011", model: "claude-fable-5-1", input: 2, output: 222, cacheRead: 30660, cacheCreate: 17655),
+                                     .turnEnded])
+    }
+
+    @Test func syntheticAndUsagelessRecordsYieldNoUsageAndMissingFieldsReadAsZero() throws {
+        let synthetic = #"{"type":"assistant","message":{"id":"2970897a","model":"<synthetic>","role":"assistant","stop_reason":"stop_sequence","usage":{"input_tokens":0,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"service_tier":null},"content":[{"type":"text","text":"API Error"}]}}"#
+        #expect(try events(synthetic) == [.assistantText(text: "API Error", endOfTurn: false)])
+        let bare = #"{"type":"assistant","message":{"id":"m1","model":"claude-opus-5-5","role":"assistant","content":[{"type":"text","text":"hi"}]}}"#
+        #expect(try events(bare) == [.assistantText(text: "hi", endOfTurn: false)])
+        let noId = #"{"type":"assistant","message":{"model":"claude-opus-5-5","role":"assistant","usage":{"input_tokens":5},"content":[{"type":"text","text":"hi"}]}}"#
+        #expect(try events(noId) == [.assistantText(text: "hi", endOfTurn: false)])
+        let partial = #"{"type":"assistant","message":{"id":"m2","model":"claude-opus-5-5","role":"assistant","usage":{"input_tokens":5,"output_tokens":null},"content":[{"type":"text","text":"hi"}]}}"#
+        #expect(try events(partial) == [.assistantText(text: "hi", endOfTurn: false),
+                                        .usage(messageID: "m2", model: "claude-opus-5-5", input: 5, output: 0, cacheRead: 0, cacheCreate: 0)])
+    }
+
+    @Test func compactBoundaryYieldsCompactedAndOtherSystemRecordsNothing() throws {
+        let compact = #"{"type":"system","subtype":"compact_boundary","content":"Conversation compacted","isMeta":false,"timestamp":"2026-10-17T07:09:34.570Z","level":"info","compactMetadata":{"trigger":"auto","preTokens":261200,"durationMs":101240,"postTokens":16097,"cumulativeDroppedTokens":245103},"cwd":"/repo","sessionId":"s1"}"#
+        let parsed = try TranscriptParser.parse(line: compact)
+        #expect(parsed.map(\.event) == [.compacted(pre: 261200, post: 16097)])
+        #expect(parsed.first?.cwd == "/repo")
+        #expect(parsed.first?.timestamp == TranscriptParser.parseTimestamp("2026-10-17T07:09:34.570Z"))
+        #expect(try events(#"{"type":"system","subtype":"turn_duration","durationMs":5}"#) == [])
+        #expect(try events(#"{"type":"system","subtype":"compact_boundary"}"#) == [.compacted(pre: 0, post: 0)])
+    }
 }

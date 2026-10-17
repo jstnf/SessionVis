@@ -37,4 +37,18 @@ enum Palette {
         case .ended: Color(hex: 0x6B7280)
         }
     }
+
+    static let contextWarn = Color(hex: 0xF0A040)
+
+    /// The ring's colour: the orb's hue until the warn threshold, then amber, then red.
+    static func contextRing(fill: CGFloat, hue: Color) -> Color {
+        if fill >= Constants.contextDangerFill { return danger }
+        if fill >= Constants.contextWarnFill { return contextWarn }
+        return hue
+    }
+
+    /// The list line's colour under the same thresholds; secondary text below them.
+    static func contextText(fill: Double?) -> Color {
+        fill.map { contextRing(fill: CGFloat($0), hue: textSecondary) } ?? textSecondary
+    }
 }

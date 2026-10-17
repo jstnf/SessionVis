@@ -91,12 +91,16 @@ public struct AgentSnapshot: Equatable, Sendable, Identifiable {
     public let touchCount: Int
     public let lastCommandLabel: String?
     public let lastMilestone: Milestone?
+    public let model: String?
+    public let context: ContextUsage?
+    public let tokens: TokenTotals?
 
-    public init(id: AgentID, kind: AgentKind, title: String, status: Status, hueIndex: Int, branch: String?, worktree: String?, firstSeen: Date, lastActivity: Date, endedAt: Date?, touchCount: Int, lastCommandLabel: String? = nil, lastMilestone: Milestone? = nil) {
+    public init(id: AgentID, kind: AgentKind, title: String, status: Status, hueIndex: Int, branch: String?, worktree: String?, firstSeen: Date, lastActivity: Date, endedAt: Date?, touchCount: Int, lastCommandLabel: String? = nil, lastMilestone: Milestone? = nil, model: String? = nil, context: ContextUsage? = nil, tokens: TokenTotals? = nil) {
         self.id = id; self.kind = kind; self.title = title; self.status = status; self.hueIndex = hueIndex
         self.branch = branch; self.worktree = worktree; self.firstSeen = firstSeen; self.lastActivity = lastActivity
         self.endedAt = endedAt; self.touchCount = touchCount
         self.lastCommandLabel = lastCommandLabel; self.lastMilestone = lastMilestone
+        self.model = model; self.context = context; self.tokens = tokens
     }
 
     public var isSubagent: Bool { if case .subagent = kind { return true } else { return false } }

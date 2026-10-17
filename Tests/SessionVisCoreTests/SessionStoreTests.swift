@@ -21,6 +21,9 @@ final class TestClock: @unchecked Sendable {
     func edit(_ path: String, id: String = "t1", at: TimeInterval = 0, cwd: String? = "/repo", agent: String? = nil, branch: String? = "main") -> SourceEvent {
         line(.toolUse(id: id, name: "Edit", filePath: path, description: nil, question: nil), at: at, cwd: cwd, agent: agent, branch: branch)
     }
+    func usage(_ id: String, model: String = "claude-fable-5-1", input: Int, output: Int, cacheRead: Int = 0, cacheCreate: Int = 0, at: TimeInterval, agent: String? = nil) -> SourceEvent {
+        line(.usage(messageID: id, model: model, input: input, output: output, cacheRead: cacheRead, cacheCreate: cacheCreate), at: at, agent: agent)
+    }
 
     @Test func sessionAppearsWithHueAndTitleFallbacks() async {
         let clock = TestClock(); let store = SessionStore(folder: folder, clock: clock.read)
@@ -718,5 +721,108 @@ final class TestClock: @unchecked Sendable {
         #expect(await settle(clock, store, to: 1).recentTouches.isEmpty)
         await store.apply(disk((1...Constants.diskAttributionPathLimit).map { "g\($0).txt" }, at: 2))
         #expect(await settle(clock, store, to: 2).recentTouches.count == Constants.diskAttributionPathLimit)
+    }
+
+    @Test func usageTotalsCountEachMessageOnceAndSetContextModelAndWindow() async {
+        let store = SessionStore(folder: folder, clock: TestClock().read)
+        await store.apply(.sessionAppeared(sessionId: "s1", transcriptURL: url))
+        let fresh = await store.snapshot().agents[0]
+        #expect(fresh.context == nil && fresh.tokens == nil && fresh.model == nil)
+        await store.apply(usage("m1", input: 2, output: 1, cacheRead: 30_660, cacheCreate: 17_655, at: 1))
+        await store.apply(usage("m1", input: 2, output: 222, cacheRead: 30_660, cacheCreate: 17_655, at: 1))   // the same response's last block
+        await store.apply(usage("m2", input: 8, output: 150, cacheRead: 48_317, cacheCreate: 1_200, at: 2))
+        let a = await store.snapshot().agents[0]
+        #expect(a.model == "claude-fable-5-1")
+        #expect(a.tokens == TokenTotals(input: 97_800, output: 300))                 // 48,317 + 49,525 and 222 + 150, quantised
+        #expect(a.context == ContextUsage(tokens: 49_500, window: 1_000_000))
+        #expect(a.context?.line == "50k / 1M · 5%")
+    }
+
+    @Test func contextFollowsTimestampPrecedenceAndDropsOnCompaction() async {
+        let store = SessionStore(folder: folder, clock: TestClock().read)
+        await store.apply(.sessionAppeared(sessionId: "s1", transcriptURL: url))
+        await store.apply(usage("m2", input: 100, output: 10, cacheRead: 200_000, at: 5))
+        await store.apply(usage("m1", input: 100, output: 10, cacheRead: 50_000, at: 4))      // older record read late: counted, not current
+        var a = await store.snapshot().agents[0]
+        #expect(a.context?.tokens == 200_100 && a.tokens?.input == 250_200)
+        await store.apply(line(.compacted(pre: 261_200, post: 16_097), at: 6))
+        a = await store.snapshot().agents[0]
+        #expect(a.context?.tokens == 16_000 && a.tokens?.input == 250_200)
+        await store.apply(line(.compacted(pre: 1, post: 1), at: 3))                           // stale compaction ignored
+        a = await store.snapshot().agents[0]
+        #expect(a.context?.tokens == 16_000)
+        #expect(a.status != .ended)
+    }
+
+    @Test func windowBumpsWhenObservedContextExceedsItAndUnknownModelHasNone() async {
+        let store = SessionStore(folder: folder, clock: TestClock().read)
+        await store.apply(.sessionAppeared(sessionId: "s1", transcriptURL: url))
+        await store.apply(usage("m1", model: "claude-haiku-4-5-20251001", input: 150_000, output: 1, at: 1))
+        var a = await store.snapshot().agents[0]
+        #expect(a.context == ContextUsage(tokens: 150_000, window: 200_000))
+        await store.apply(usage("m2", model: "claude-haiku-4-5-20251001", input: 250_000, output: 1, at: 2))
+        a = await store.snapshot().agents[0]
+        #expect(a.context == ContextUsage(tokens: 250_000, window: 1_000_000))
+        await store.apply(.sessionAppeared(sessionId: "s2", transcriptURL: URL(fileURLWithPath: "/p/s2.jsonl")))
+        await store.apply(.line(sessionId: "s2", agentId: nil, TranscriptLine(timestamp: t0.addingTimeInterval(1), cwd: "/repo",
+                                event: .usage(messageID: "x", model: "mystery-9", input: 500, output: 20, cacheRead: 0, cacheCreate: 0))))
+        let b = await store.snapshot().agents[1]
+        #expect(b.model == "mystery-9")
+        #expect(b.context == ContextUsage(tokens: 500, window: nil) && b.context?.fill == nil)
+        #expect(b.tokens == TokenTotals(input: 500, output: 0))
+    }
+
+    @Test func subagentUsageLandsOnTheSubagentOverridesItsMetaModelAndSurvivesItsEnd() async {
+        let store = SessionStore(folder: folder, clock: TestClock().read)
+        await store.apply(.sessionAppeared(sessionId: "s1", transcriptURL: url))
+        await store.apply(.subagentAppeared(sessionId: "s1", agentId: "A", meta: SubagentMeta(description: "look", model: "sonnet")))
+        var snap = await store.snapshot()
+        #expect(snap.agents.first { $0.id == AgentID("A") }?.model == "sonnet")
+        await store.apply(usage("m1", model: "claude-sonnet-5-5", input: 1_000, output: 50, at: 1, agent: "A"))
+        snap = await store.snapshot()
+        let sub = snap.agents.first { $0.id == AgentID("A") }
+        #expect(sub?.model == "claude-sonnet-5-5")
+        #expect(sub?.tokens == TokenTotals(input: 1_000, output: 0) && sub?.context?.tokens == 1_000)
+        let main = snap.agents.first { $0.id == AgentID("s1") }       // rows sort by first-seen then id, so never index for the main here
+        #expect(main?.tokens == nil && main?.context == nil && main?.model == nil)
+        await store.apply(line(.toolUse(id: "sh", name: "SubagentHandback", filePath: nil, description: nil, question: nil), at: 2, agent: "A"))
+        await store.apply(usage("m2", model: "claude-sonnet-5-5", input: 2_000, output: 50, at: 3, agent: "A"))   // read after its end: still counted
+        snap = await store.snapshot()
+        #expect(snap.agents.first { $0.id == AgentID("A") }?.tokens?.input == 3_000)
+        #expect(snap.agents.first { $0.id == AgentID("A") }?.status == .ended)
+    }
+
+    @Test func windowResetsWhenTheModelChanges() async {
+        let store = SessionStore(folder: folder, clock: TestClock().read)
+        await store.apply(.sessionAppeared(sessionId: "s1", transcriptURL: url))
+        await store.apply(usage("m1", model: "claude-fable-5-1", input: 300_000, output: 10, at: 1))
+        var a = await store.snapshot().agents[0]
+        #expect(a.context == ContextUsage(tokens: 300_000, window: 1_000_000))
+        await store.apply(usage("m2", model: "claude-haiku-4-5-20251001", input: 150_000, output: 10, at: 2))
+        a = await store.snapshot().agents[0]
+        #expect(a.model == "claude-haiku-4-5-20251001")
+        #expect(a.context == ContextUsage(tokens: 150_000, window: 200_000))
+        await store.apply(usage("m3", model: "claude-haiku-4-5-20251001", input: 300_000, output: 10, at: 3))
+        a = await store.snapshot().agents[0]
+        #expect(a.context?.window == 1_000_000)
+    }
+
+    @Test func retiredRecordStillAccumulatesUsage() async {
+        let clock = TestClock(); let store = SessionStore(folder: folder, clock: clock.read)
+        await store.apply(.sessionAppeared(sessionId: "s1", transcriptURL: url))
+        await store.apply(line(.userPrompt(text: "go")))
+        await store.apply(usage("m1", input: 1_000, output: 10, at: 1))
+        clock.advance(Constants.activeWindow + 2)
+        _ = await store.snapshot()   // main ends
+        clock.advance(Constants.endedLinger + 1)
+        var snap = await store.snapshot()
+        #expect(snap.agents.isEmpty)   // retired records are not published
+        await store.apply(usage("m2", input: 2_000, output: 10, at: 2))
+        snap = await store.snapshot()
+        #expect(snap.agents.isEmpty)
+        let later = Constants.activeWindow + Constants.endedLinger + 5
+        await store.apply(line(.userPrompt(text: "again"), at: later))
+        snap = await store.snapshot()
+        #expect(snap.agents.first { $0.id == AgentID("s1") }?.tokens?.input == 3_000)
     }
 }

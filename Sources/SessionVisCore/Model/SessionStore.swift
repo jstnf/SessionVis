@@ -2,6 +2,12 @@ import Foundation
 
 /// Owns every agent's state.
 public actor SessionStore {
+    struct UsageContribution: Equatable {
+        let messageID: String
+        let input: Int
+        let output: Int
+    }
+
     struct AgentRecord {
         let id: AgentID
         let sessionId: String
@@ -22,6 +28,15 @@ public actor SessionStore {
         var metaToolUseId: String?
         /// Ended by its own hand-back/turn end or by a task notification: only a resume (new user prompt) revives it.
         var stickyEnd = false
+        var model: String?
+        /// Latest context size (input + cache read + cache create of the newest record, or a compaction's post size) and its timestamp.
+        var contextTokens: Int?
+        var contextAt = Date.distantPast
+        var window: Int?
+        var inputTotal = 0
+        var outputTotal = 0
+        /// The last usage record's contribution: a repeat of its id replaces it rather than adding again.
+        var lastUsage: UsageContribution?
 
         var title: String {
             if case .subagent(_, let description, _, _) = kind { return description }
@@ -179,6 +194,27 @@ public actor SessionStore {
     }
 
     private func applyLine(sessionId: String, agentId: String?, line: TranscriptLine) {
+        // Compaction records and untimed usage records are bookkeeping only: they reach an existing record's context and
+        // totals, and never create, revive or age one.
+        switch line.event {
+        case .compacted(_, let post):
+            let key = AgentID(agentId ?? sessionId)
+            if var rec = agents[key], let stamp = line.timestamp, stamp >= rec.contextAt {
+                rec.contextTokens = min(max(post, 0), Constants.tokenCountCap)
+                rec.contextAt = stamp
+                agents[key] = rec
+            }
+            return
+        case .usage(let messageID, let model, let input, let output, let cacheRead, let cacheCreate) where line.timestamp == nil:
+            let key = AgentID(agentId ?? sessionId)
+            if var rec = agents[key] {
+                applyUsage(messageID: messageID, model: model, counts: (input, output, cacheRead, cacheCreate), at: nil, to: &rec)
+                agents[key] = rec
+            }
+            return
+        default:
+            break
+        }
         let id: AgentID
         let t = line.timestamp ?? clock()
         if let agentId {
@@ -261,6 +297,10 @@ public actor SessionStore {
             }
         case .turnEnded, .interrupted:
             closeCommands(of: id, at: t)
+        case .usage(let messageID, let model, let input, let output, let cacheRead, let cacheCreate):
+            applyUsage(messageID: messageID, model: model, counts: (input, output, cacheRead, cacheCreate), at: line.timestamp, to: &rec)
+        case .compacted:
+            break
         case .assistantText, .taskNotification:
             break
         }
@@ -369,12 +409,47 @@ public actor SessionStore {
                 AgentSnapshot(id: r.id, kind: r.kind, title: r.title, status: r.machine.status, hueIndex: r.hueIndex,
                               branch: r.branch, worktree: r.worktree, firstSeen: r.firstSeen,
                               lastActivity: r.machine.lastActivity, endedAt: r.endedAt, touchCount: r.touchCount,
-                              lastCommandLabel: r.lastCommandLabel, lastMilestone: r.lastMilestone)
+                              lastCommandLabel: r.lastCommandLabel, lastMilestone: r.lastMilestone,
+                              model: r.model ?? r.metaModel,
+                              context: r.contextTokens.map { ContextUsage(tokens: TokenFormat.quantise($0), window: r.window) },
+                              tokens: r.lastUsage == nil ? nil : TokenTotals(input: TokenFormat.quantise(r.inputTotal), output: TokenFormat.quantise(r.outputTotal)))
             }
         return StoreSnapshot(agents: list, recentTouches: touches, recentCommands: commands, hookEventsSeenAt: hookEventsSeenAt, skippedLines: skippedLines)
     }
 
     // MARK: - Helpers
+
+    /// Totals count each message id once (a response split across records repeats the id, and the last repeat carries the full
+    /// output count); the context size, model and window follow the newest record by timestamp, like status. A record without a
+    /// timestamp only feeds the totals. A record without a model keeps the previous one.
+    private func applyUsage(messageID: String, model: String?, counts: (input: Int, output: Int, cacheRead: Int, cacheCreate: Int),
+                            at stamp: Date?, to rec: inout AgentRecord) {
+        let cap = Constants.tokenCountCap
+        func clamp(_ n: Int) -> Int { min(max(n, 0), cap) }
+        let input = clamp(counts.input) + clamp(counts.cacheRead) + clamp(counts.cacheCreate)
+        let output = clamp(counts.output)
+        if let last = rec.lastUsage, last.messageID == messageID {
+            rec.inputTotal = max(0, rec.inputTotal - last.input)
+            rec.outputTotal = max(0, rec.outputTotal - last.output)
+        }
+        rec.inputTotal = Self.saturatingAdd(rec.inputTotal, input)
+        rec.outputTotal = Self.saturatingAdd(rec.outputTotal, output)
+        rec.lastUsage = UsageContribution(messageID: messageID, input: input, output: output)
+        guard let stamp, stamp >= rec.contextAt else { return }
+        rec.contextTokens = input
+        rec.contextAt = stamp
+        var base = rec.window
+        if let model, model != rec.model || base == nil {
+            rec.model = model
+            base = ContextWindow.lookup(model: model)
+        }
+        rec.window = base.map { ContextWindow.fitting(observed: input, base: $0) }
+    }
+
+    private static func saturatingAdd(_ a: Int, _ b: Int) -> Int {
+        let (sum, overflow) = a.addingReportingOverflow(b)
+        return overflow ? Int.max : sum
+    }
 
     /// Credits settled disk changes to the one agent whose command was running at the time.
     private func resolveDiskChanges(now: Date) {
@@ -451,4 +526,5 @@ public actor SessionStore {
 
 extension SessionStore.AgentRecord {
     var parentId: AgentID? { if case .subagent(let p, _, _, _) = kind { return p } else { return nil } }
+    var metaModel: String? { if case .subagent(_, _, _, let m) = kind { return m } else { return nil } }
 }

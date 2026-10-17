@@ -36,6 +36,19 @@ enum SceneRenderer {
                                                         center: p, startRadius: 0, endRadius: radius))
     }
 
+    /// A ring outside the orb, from 12 o'clock clockwise by `fill` of a turn; a fill of 1 or more is a full circle.
+    private static func contextRing(_ ctx: inout GraphicsContext, at p: CGPoint, orbRadius r: CGFloat, scale: CGFloat, fill: CGFloat, color: Color) {
+        guard fill >= Constants.contextRingMinFill else { return }
+        var path = Path()
+        let radius = r + Constants.contextRingGap * scale
+        if fill >= 1 {
+            path.addEllipse(in: CGRect(x: p.x - radius, y: p.y - radius, width: 2 * radius, height: 2 * radius))
+        } else {
+            path.addArc(center: p, radius: radius, startAngle: .degrees(-90), endAngle: .degrees(-90 + 360 * Double(fill)), clockwise: false)
+        }
+        ctx.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: Constants.contextRingWidth, lineCap: .round))
+    }
+
     // 1. Edges: plain grey batched, lit edges batched per hue/level (blended toward the hue and widened by strength), dying ones last.
     private static func drawEdges(_ sim: Simulation, _ ctx: inout GraphicsContext, _ viewport: CGRect) {
         var path = Path(), ghostPath = Path()
@@ -215,6 +228,9 @@ enum SceneRenderer {
             let tint = Palette.tint(av.hueIndex)
             glow(&ctx, at: p, radius: 3 * r, color: tint, centerAlpha: 0.55 * av.alpha)
             ctx.fill(circle(p, r), with: .color(tint.opacity(av.alpha)))
+            if let fill = av.contextFill {
+                contextRing(&ctx, at: p, orbRadius: r, scale: av.renderScale, fill: fill, color: Palette.contextRing(fill: fill, hue: tint).opacity(av.alpha))
+            }
         }
         for id in sim.avatarOrder {
             guard let av = sim.avatars[id], !av.isSubagent, av.alpha > 0 else { continue }
@@ -224,6 +240,9 @@ enum SceneRenderer {
             let alpha: Double = { if case .idle = av.status { return av.alpha * 0.6 } else { return av.alpha } }()
             glow(&ctx, at: p, radius: 2.2 * r, color: hue, centerAlpha: 0.6 * alpha)
             ctx.fill(circle(p, r), with: .color(hue.opacity(alpha)))
+            if let fill = av.contextFill {
+                contextRing(&ctx, at: p, orbRadius: r, scale: av.renderScale, fill: fill, color: Palette.contextRing(fill: fill, hue: hue).opacity(alpha))
+            }
         }
     }
 
