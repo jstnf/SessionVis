@@ -8,7 +8,7 @@ extension Color {
     init(rgb: HuePalette.RGB) { self.init(red: rgb.r, green: rgb.g, blue: rgb.b) }
 }
 
-/// Spec colours (Global Constraints).
+/// Palette colours.
 enum Palette {
     static let background = Color(hex: 0x0E1117)
     static let ghost = Color(hex: 0x6E788C)
