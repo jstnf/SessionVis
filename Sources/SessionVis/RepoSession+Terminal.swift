@@ -1,7 +1,7 @@
 import AppKit
 import SessionVisCore
 
-extension AppModel {
+extension RepoSession {
     /// A main session, or a subagent of one (it opens its parent's terminal). An ended session still qualifies: an
     /// idle one may still be open in a tab, and a dead process is reported as not found. Replay sessions have no process.
     func canOpenTerminal(_ agent: AgentSnapshot) -> Bool {

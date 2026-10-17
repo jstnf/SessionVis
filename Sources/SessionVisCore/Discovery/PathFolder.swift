@@ -80,6 +80,18 @@ public struct PathFolder: Sendable, Equatable {
         return "/" + out.joined(separator: "/")
     }
 
+    /// The path as the file system spells it: symlinks resolved, `/tmp` as `/private/tmp`, and the case the volume
+    /// stores, so every spelling of one existing directory collapses to the same string. A path that does not exist
+    /// gets the lexical normalisation.
+    public static func canonical(_ path: String) -> String {
+        let lexical = normalize(path)
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: lexical, isDirectory: &isDirectory), isDirectory.boolValue else { return lexical }
+        let resolved = URL(fileURLWithPath: lexical).resolvingSymlinksInPath().standardizedFileURL
+        let spelled = (try? resolved.resourceValues(forKeys: [.canonicalPathKey]))?.canonicalPath
+        return normalize(spelled ?? resolved.path)
+    }
+
     /// The path with every symlink resolved, which is how git and FSEvents report paths; nil when it does not exist.
     public static func realPath(_ path: String) -> String? {
         guard let resolved = realpath(path, nil) else { return nil }

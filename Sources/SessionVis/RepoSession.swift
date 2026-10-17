@@ -2,8 +2,10 @@ import SwiftUI
 import AppKit
 import SessionVisCore
 
+/// One tab: everything that belongs to a single watched directory. The workspace owns the tabs, the hook router and launch.
 @MainActor @Observable
-final class AppModel {
+final class RepoSession {
+    let id: UUID
     var directory: String?
     var snapshot: StoreSnapshot = .empty
     var treeFileCount = 0
@@ -14,9 +16,14 @@ final class AppModel {
     var hover: Hit?
     var hoverPoint: CGPoint?
     var isReplay = false
-    var hookInstalled = false
     /// Why the last attempt to open a session's terminal failed; cleared after a moment. nil after a success or when a new attempt starts.
     var terminalMessage: String?
+    /// Whether this tab is the one on screen: only then is the scene stepped and the store polled at full rate.
+    var isVisible = false
+    /// What the tab's badge shows; assigned only when it changes.
+    var activity = TabActivity()
+    /// The directory was not there at open. The tab stays, and the open is retried on selection and activation.
+    var directoryMissing = false
     /// The registered worktrees, for Settings.
     var worktrees: [Worktree] = []
     /// Hidden-file rules for the watched directory, and what they currently hide.
@@ -24,19 +31,20 @@ final class AppModel {
     var hiddenFileCount = 0
     var suggestions: [Suggestion] = []
     /// Focus mode: the layout gives the room to the files sessions are working in. A way of looking, kept across directories.
-    var focusMode = UserDefaults.standard.bool(forKey: AppModel.focusModeKey)
+    var focusMode = UserDefaults.standard.bool(forKey: RepoSession.focusModeKey)
     /// True from source start until it reports `.initialLoadComplete`; the scene is not fed meanwhile.
     var isLoading = false
     /// Whether any main session is live; stored so the Session menu does not re-evaluate on every snapshot.
     var hasLiveMain = false
     let projectsRoot = SessionDiscovery.projectsRoot()
     let box = SimulationBox()
+    /// The app-wide hook router; nil for a replay, which takes no hooks.
+    @ObservationIgnored let hooks: HookRouter?
 
     @ObservationIgnored private var store: SessionStore?
     @ObservationIgnored private var live: LiveSource?
     @ObservationIgnored private var pumpTask: Task<Void, Never>?
     @ObservationIgnored private var pollTask: Task<Void, Never>?
-    @ObservationIgnored private var launched = false
     @ObservationIgnored private var openGeneration = 0
     @ObservationIgnored private var watcher: RepoWatcher?
     @ObservationIgnored private var watcherTask: Task<Void, Never>?
@@ -47,8 +55,12 @@ final class AppModel {
     @ObservationIgnored private let filterStore = FileFilterStore()
     @ObservationIgnored var terminalTask: Task<Void, Never>?
     @ObservationIgnored var terminalMessageTask: Task<Void, Never>?
-    static let lastDirectoryKey = "lastDirectory"
     static let focusModeKey = "focusMode"
+
+    init(id: UUID = UUID(), hooks: HookRouter? = nil) {
+        self.id = id
+        self.hooks = hooks
+    }
 
     var mains: [AgentSnapshot] { snapshot.agents.filter { !$0.isSubagent } }
     /// Main sessions that have not ended, in list order: what Tab steps through.
@@ -77,53 +89,14 @@ final class AppModel {
         return s
     }
 
-    // MARK: - Launch
-
-    func handleLaunch() async {
-        guard !launched else { return }
-        launched = true
-        NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
-        let candidates = [
-            Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
-            URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("Assets/AppIcon.icns"),
-        ].compactMap { $0 }
-        if let iconURL = candidates.first(where: { FileManager.default.fileExists(atPath: $0.path) }), let image = NSImage(contentsOf: iconURL) {
-            NSApp.applicationIconImage = image
-        }
-        let options = LaunchOptions.parse(Array(CommandLine.arguments.dropFirst()))
-        if let replay = options.replayTranscript {
-            guard let dir = options.directory else {
-                errorMessage = "--replay needs a directory argument to seed the tree."
-                return
-            }
-            await startReplay(transcript: URL(fileURLWithPath: replay), speed: options.speed, directory: dir)
-        } else if let dir = options.directory ?? UserDefaults.standard.string(forKey: Self.lastDirectoryKey) {
-            await open(directory: dir)
-        } else {
-            presentOpenPanel()
-        }
-    }
-
-    func presentOpenPanel() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.allowsMultipleSelection = false
-        panel.prompt = "Watch"
-        panel.message = "Choose the directory whose Claude Code sessions to visualise"
-        panel.begin { [weak self] response in
-            guard response == .OK, let url = panel.url else { return }
-            Task { @MainActor in await self?.open(directory: url.path) }
-        }
-    }
-
     // MARK: - Sources
 
     func open(directory raw: String) async {
         let dir = PathFolder.normalize(raw)
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: dir, isDirectory: &isDirectory), isDirectory.boolValue else {
+            directory = dir
+            directoryMissing = true
             errorMessage = "\(dir) is not a directory."
             return
         }
@@ -131,22 +104,25 @@ final class AppModel {
         openGeneration += 1
         let generation = openGeneration
         directory = dir
+        directoryMissing = false
         filter = filterStore.filter(for: dir)
         isReplay = false
         errorMessage = nil
-        UserDefaults.standard.set(dir, forKey: Self.lastDirectoryKey)
         guard FileManager.default.fileExists(atPath: projectsRoot.path) else {
             errorMessage = "Claude Code's projects folder was not found at \(projectsRoot.path)."
             return
         }
         let folder = await Task.detached(priority: .userInitiated) { RegistryRefresh.folder(root: dir) }.value
         guard generation == openGeneration else { return }
+        // Registered before anything slow, so hooks that arrive while the tab is still opening are delivered.
+        let store = SessionStore(folder: folder)
+        await hooks?.register(id, generation: generation, folder: folder) { [store] event in await store.apply(.hook(event)) }
+        guard await stillCurrent(generation) else { return }
         let tree = await loadTree(folder)
-        guard generation == openGeneration else { return }
+        guard await stillCurrent(generation) else { return }
         self.folder = folder
         worktrees = folder.worktrees
         applyTree(tree, folder: folder)
-        let store = SessionStore(folder: folder)
         let watcher = RepoWatcher(folder: folder, initial: tree)
         self.watcher = watcher
         watcher.start()
@@ -159,16 +135,22 @@ final class AppModel {
                 if !paths.isEmpty { await store.apply(.diskChanges(DiskChange(origin: delta.origin, paths: paths, at: delta.at))) }
             }
         }
-        let live = LiveSource(folder: folder, projectsRoot: projectsRoot, spoolDirectory: HookSnippet.defaultSpoolDirectory)
+        let live = LiveSource(folder: folder, projectsRoot: projectsRoot, spoolDirectory: nil)
         self.store = store
         self.live = live
-        hookInstalled = HookSnippet.isInstalled(settingsURL: HookSnippet.defaultSettingsURL())
-        HookSnippet.createMarker()
         startPump(live.events, store: store, generation: generation)
         await live.start()
-        guard generation == openGeneration else { return }
+        guard await stillCurrent(generation) else { return }
         startPolling(store)
         await armRegistryWatcher(root: dir, generation: generation)
+    }
+
+    /// Whether `generation` is still the open in progress. When a stop overtook it, the router registration made
+    /// for it is removed here, because the stop's own removal may have run before the registration landed.
+    private func stillCurrent(_ generation: Int) async -> Bool {
+        if generation == openGeneration { return true }
+        await hooks?.unregister(id, generation: generation)
+        return false
     }
 
     func startReplay(transcript: URL, speed: Double, directory raw: String) async {
@@ -192,6 +174,12 @@ final class AppModel {
         let source = ReplaySource(transcriptURL: transcript, speed: speed)
         startPump(source.events(), store: store, generation: generation)
         startPolling(store)
+    }
+
+    /// A tab whose directory was missing at open tries again (on selection and when the app becomes active).
+    func retryIfMissing() async {
+        guard directoryMissing, let dir = directory else { return }
+        await open(directory: dir)
     }
 
     /// Feeds the store in order; flips `isLoading` off once everything on disk at launch has been applied.
@@ -224,6 +212,8 @@ final class AppModel {
                 guard !Task.isCancelled else { return }
                 guard let self else { return }
                 if snap != self.snapshot { self.snapshot = snap }
+                let activity = TabActivity(snapshot: snap)
+                if activity != self.activity { self.activity = activity }
                 let visible = self.box.simulation.visibleFileCount
                 if visible != self.treeFileCount { self.treeFileCount = visible }
                 let hiddenCount = self.box.simulation.hiddenFileCount
@@ -236,9 +226,20 @@ final class AppModel {
                 if live != self.hasLiveMain { self.hasLiveMain = live }
                 // While loading, the list may update but the scene waits, so history lands as one priming pass.
                 if !self.isLoading { self.box.apply(snap, now: Date()) }
-                try? await Task.sleep(for: .seconds(Constants.snapshotInterval))
+                await self.sleepBetweenPolls()
                 guard !Task.isCancelled else { return }
             }
+        }
+    }
+
+    /// Sleeps in short slices so a change of visibility changes the pace within one visible interval.
+    private func sleepBetweenPolls() async {
+        let started = ContinuousClock.now
+        while !Task.isCancelled {
+            let interval = Duration.seconds(isVisible ? Constants.snapshotInterval : Constants.hiddenSnapshotInterval)
+            let remaining = interval - (ContinuousClock.now - started)
+            if remaining <= .zero { return }
+            try? await Task.sleep(for: min(remaining, .seconds(Constants.snapshotInterval)))
         }
     }
 
@@ -297,10 +298,12 @@ final class AppModel {
             worktrees = next.worktrees
             watcher?.setFolder(next)
             box.setFolder(next)
+            await hooks?.setFolder(next, for: id)
         } while refreshRequested
     }
 
     func stop() {
+        let generation = openGeneration
         openGeneration += 1
         pumpTask?.cancel(); pumpTask = nil
         pollTask?.cancel(); pollTask = nil
@@ -312,7 +315,7 @@ final class AppModel {
         folder = nil
         worktrees = []
         if let live { Task { await live.stop() } }
-        if live != nil { HookSnippet.removeMarker() }
+        if let hooks { Task { await hooks.unregister(id, generation: generation) } }
         live = nil
         isLoading = false
         store = nil

@@ -1,43 +1,28 @@
 import SwiftUI
 import SessionVisCore
 
+/// The window: the selected tab's scene, or the empty prompt. The background alone ignores the safe area.
 struct ContentView: View {
-    let model: AppModel
+    let workspace: Workspace
 
     var body: some View {
-        ZStack {
-            Palette.background.ignoresSafeArea()
-            SceneView(model: model)
-            InputCaptureView(onScroll: model.handleScroll,
-                             onMagnify: model.handleMagnify,
-                             onMove: model.handleMove,
-                             onClick: model.handleClick,
-                             onKey: model.handleKey)
-            TooltipView(model: model)
-            GeometryReader { geo in
-                VStack {
-                    HStack {
-                        OverlayListView(model: model, availableHeight: geo.size.height)
-                        Spacer()
-                    }
-                    Spacer()
-                }
-                .padding(12)
-            }
-            if let message = model.errorMessage {
-                VStack {
-                    Spacer()
-                    Text(message)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(Palette.text)
-                        .padding(10)
-                        .background(Color(hex: 0xF0605A).opacity(0.25), in: RoundedRectangle(cornerRadius: 8))
-                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(hex: 0xF0605A).opacity(0.6), lineWidth: 1))
-                        .padding(.bottom, 16)
-                }
+        VStack(spacing: 0) {
+            TabStripView(workspace: workspace)
+            if let session = workspace.selected {
+                SessionView(model: session, workspace: workspace)
+                    .id(session.id)
+            } else if workspace.selectedEntry != nil {
+                ProgressView("Opening…")
+                    .controlSize(.small)
+                    .foregroundStyle(Palette.textSecondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                EmptyTabsView(workspace: workspace)
             }
         }
-        .navigationTitle(model.windowTitle)
-        .navigationSubtitle(model.windowSubtitle)
+        .background(Palette.background.ignoresSafeArea())
+        .navigationTitle(workspace.selected?.windowTitle ?? "SessionVis")
+        .navigationSubtitle(workspace.selected?.windowSubtitle ?? (workspace.selectedEntry == nil ? "Open a directory to begin" : ""))
+        .focusedSceneValue(\.mainWorkspace, workspace)
     }
 }

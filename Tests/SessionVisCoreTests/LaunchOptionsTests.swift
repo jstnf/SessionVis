@@ -25,4 +25,14 @@ import Testing
         #expect(d?.hasPrefix("/") == true && d?.hasSuffix("/x") == true)
         #expect(LaunchOptions.parse(["--replay", "/t.jsonl", "--dir", "/repo"]) == LaunchOptions(directory: "/repo", replayTranscript: "/t.jsonl"))
     }
+    @Test func secondDirKeepsTheLast() {
+        #expect(LaunchOptions.parse(["--dir", "/a", "--dir", "/b"]).directory == "/b")
+    }
+
+    @Test func relativeDirectoriesResolveAgainstTheCurrentDirectory() {
+        #expect(LaunchOptions.parse(["--dir", "."], currentDirectory: "/work/repo").directory == "/work/repo")
+        #expect(LaunchOptions.parse(["--dir", "sub/x"], currentDirectory: "/work/repo").directory == "/work/repo/sub/x")
+        #expect(LaunchOptions.parse(["../other"], currentDirectory: "/work/repo").directory == "/work/other")
+        #expect(LaunchOptions.parse(["--dir", "."]).directory != "/")
+    }
 }

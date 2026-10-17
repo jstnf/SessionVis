@@ -4,7 +4,7 @@ import SessionVisCore
 
 /// The floating session list. Floats top-left; rows stay in first-seen order.
 struct OverlayListView: View {
-    let model: AppModel
+    let model: RepoSession
     var availableHeight: CGFloat = 600
     @State private var contentHeight: CGFloat = 0
 

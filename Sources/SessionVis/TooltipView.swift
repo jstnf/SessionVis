@@ -7,7 +7,7 @@ struct TooltipLine {
 }
 
 struct TooltipView: View {
-    let model: AppModel
+    let model: RepoSession
     @State private var size: CGSize = .zero
 
     var body: some View {

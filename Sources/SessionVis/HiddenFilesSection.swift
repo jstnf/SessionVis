@@ -3,7 +3,7 @@ import SessionVisCore
 
 /// Settings section: the hidden-file rules for the watched directory, a field to add one, and suggested suffixes.
 struct HiddenFilesSection: View {
-    let model: AppModel
+    let model: RepoSession
     @State private var draft = ""
     @State private var message: String?
 

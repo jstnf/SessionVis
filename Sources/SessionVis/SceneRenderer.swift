@@ -2,7 +2,7 @@ import SwiftUI
 import SessionVisCore
 
 /// Draws one frame of the simulation. Pure function of the simulation state
-/// (plus a cache of the sorted directory list, rebuilt only when the tree changes).
+/// (plus the scene's directory label cache, rebuilt only when its tree changes).
 @MainActor
 enum SceneRenderer {
     static let labelBudget = 80
@@ -11,7 +11,7 @@ enum SceneRenderer {
     static let mono9 = Font.system(size: 9, design: .monospaced)
     static let mono10 = Font.system(size: 10, design: .monospaced)
 
-    static func draw(_ sim: Simulation, hover: Hit?, into ctx: inout GraphicsContext, size: CGSize) {
+    static func draw(_ sim: Simulation, hover: Hit?, cache: DirectoryListCache, into ctx: inout GraphicsContext, size: CGSize) {
         ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(Palette.background))
         let viewport = CGRect(origin: .zero, size: size).insetBy(dx: -40, dy: -40)
         drawEdges(sim, &ctx, viewport)
@@ -24,7 +24,7 @@ enum SceneRenderer {
         drawFollowRing(sim, &ctx)
         drawPulses(sim, &ctx)
         drawBadges(sim, &ctx)
-        drawLabels(sim, hover: hover, &ctx, viewport)
+        drawLabels(sim, hover: hover, cache: cache, &ctx, viewport)
     }
 
     private static func circle(_ center: CGPoint, _ r: CGFloat) -> Path {
@@ -153,18 +153,6 @@ enum SceneRenderer {
             ctx.stroke(path, with: .color(Palette.mix(Palette.nodeRGB, HuePalette.hue(key.hue, shade: key.shade), Double(key.level) / Double(tintLevels))), lineWidth: Constants.ghostRingWidth)
         }
         for (path, alpha) in landingRings { ctx.stroke(path, with: .color(Palette.ghost.opacity(alpha)), lineWidth: Constants.ghostRingWidth) }
-    }
-
-    /// Non-root directories in path order, recomputed only when the tree version changes.
-    private static var directoryCache: (version: Int, paths: [RepoPath])?
-    /// Called when a new tree replaces the old one (a different tree can have the same counts).
-    static func resetCaches() { directoryCache = nil }
-
-    private static func sortedDirectories(_ tree: FileTree, version: Int) -> [RepoPath] {
-        if let c = directoryCache, c.version == version { return c.paths }
-        let paths = tree.nodes.values.filter { $0.isDirectory && !$0.path.isRoot }.map(\.path).sorted()
-        directoryCache = (version, paths)
-        return paths
     }
 
     // 3. Halos
@@ -302,7 +290,7 @@ enum SceneRenderer {
     }
 
     // 8. Labels (budgeted; hot files first)
-    private static func drawLabels(_ sim: Simulation, hover: Hit?, _ ctx: inout GraphicsContext, _ viewport: CGRect) {
+    private static func drawLabels(_ sim: Simulation, hover: Hit?, cache: DirectoryListCache, _ ctx: inout GraphicsContext, _ viewport: CGRect) {
         var budget = labelBudget
         var hoveredPath: RepoPath?
         if case .node(let p) = hover { hoveredPath = p }
@@ -323,7 +311,7 @@ enum SceneRenderer {
             budget -= 1
         }
         if sim.camera.zoom >= 0.6 {
-            for path in sortedDirectories(sim.tree, version: sim.treeVersion) where budget > 0 {
+            for path in cache.sortedDirectories(of: sim.tree, version: sim.treeVersion) where budget > 0 {
                 guard let w = sim.position(of: path) else { continue }
                 let p = sim.worldToScreen(w)
                 guard viewport.contains(p) else { continue }

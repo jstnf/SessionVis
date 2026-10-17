@@ -1,6 +1,6 @@
 # SessionVis
 
-A native macOS visualiser for live Claude Code sessions. Point it at a directory and it tails the Claude Code transcripts for that directory (and every git worktree of it, wherever it is checked out), draws the repo as a gource-style radial graph, and shows each session as an orb that fires beams at the files it reads and edits. Subagents are smaller orbs inside their parent's halo, each in its own shade of the parent's colour. A touched file flashes in the session's colour, then keeps a tint of it that fades back to grey over two minutes, so you can see where each agent has recently been. A floating list mirrors iTerm's Session Status panel.
+A native macOS visualiser for live Claude Code sessions. Point it at one or more directories, one per tab, and it tails the Claude Code transcripts for each (and every git worktree of it, wherever it is checked out), draws the repo as a gource-style radial graph, and shows each session as an orb that fires beams at the files it reads and edits. Subagents are smaller orbs inside their parent's halo, each in its own shade of the parent's colour. A touched file flashes in the session's colour, then keeps a tint of it that fades back to grey over two minutes, so you can see where each agent has recently been. A floating list mirrors iTerm's Session Status panel.
 
 ![SessionVis showing live sessions over a repo's file graph](docs/ui.png)
 
@@ -9,16 +9,17 @@ A native macOS visualiser for live Claude Code sessions. Point it at a directory
     swift run SessionVis --dir /path/to/repo            # live
     swift run SessionVis --replay <transcript.jsonl> --speed 20 --dir /path/to/repo
     scripts/bundle-app.sh && open dist/SessionVis.app --args --dir /path/to/repo
+    swift run SessionVis                                # reopens the tabs from last time
 
-The directory must be passed with `--dir`; a bare path argument is treated by AppKit as a document to open and no window appears.
+The directory must be passed with `--dir` (a relative path is resolved against the current directory, and spellings of one directory through symlinks, `/tmp` or a different case are one tab); a bare path argument is treated by AppKit as a document to open and no window appears. `--dir` selects the tab for that directory or adds one; without arguments the tabs from the last run come back. A replay opens in its own tab and is not remembered.
 
-Trackpad scroll pans, pinch zooms, double-click refits. Click a session in the list or its orb to follow it; Tab and Shift-Tab step the follow through the live sessions, Escape stops it where the view is (the Session menu has the same three actions as ⌘], ⌘[ and ⌘.). ⌘⇧F toggles focus mode, ⌘L collapses the list, ⌘O opens another directory, ⌘, shows settings: the optional hook snippet for exact "waiting on permission" states, and hidden-file rules.
+Trackpad scroll pans, pinch zooms, double-click refits. Click a session in the list or its orb to follow it; Tab and Shift-Tab step the follow through the live sessions, Escape stops it where the view is (the Session menu has the same three actions as ⌘], ⌘[ and ⌘.). ⌘T opens a directory in a new tab, ⌘W closes the tab (⌘⇧W closes the window, and ⌘W closes Settings when it is the key window), ⌘⇧] and ⌘⇧[ switch tabs, ⌘1–⌘9 jump to one, ⌥⌘← and ⌥⌘→ move it, ⌘O replaces the current tab's directory. ⌘⇧F toggles focus mode, ⌘L collapses the list, ⌘, shows settings: the optional hook snippet for exact "waiting on permission" states, and hidden-file rules for the selected tab.
 
 ## Privacy
 
 - To find which sessions belong to the directory, SessionVis reads the head of every transcript under `~/.claude/projects` (up to 256 KB each, only for transcripts modified in the last 30 minutes) and then tails the member transcripts.
 - The session list shows prompt text (session titles fall back to the first prompt; waiting rows preview the question).
-- The optional hook writes raw hook payloads (prompts, tool inputs and outputs) to `~/Library/Application Support/SessionVis/hooks` only while SessionVis is running (it checks a marker file the app creates on open and removes on quit). SessionVis deletes each file as it reads it and prunes leftovers older than an hour.
+- The optional hook writes raw hook payloads (prompts, tool inputs and outputs) to `~/Library/Application Support/SessionVis/hooks` only while SessionVis is running (it checks a marker file the app creates when its first live tab opens, so a replay-only launch creates none, and removes on quit). One reader for the whole app deletes each file as it reads it and hands the payload to every tab whose directory it belongs to; leftovers older than an hour are pruned.
 - Nothing leaves your machine.
 
 ## Status
@@ -37,6 +38,7 @@ What you can check by hand:
 - Following a session zooms the camera to frame its orb, its subagents and the files it touched in the last 20 seconds, within a fixed zoom range, and rings the orb; the list row shows a scope glyph. Tab and Shift-Tab cycle the follow through live sessions, Escape stops it without moving the view, a pan or pinch stops it too.
 - Each orb wears a thin arc that fills clockwise as the session's context fills (amber from 80%, red from 92%), and the session list shows `142k / 1M · 14%`; a compaction drops the arc at once. The orb's tooltip adds the lifetime input and output token counts and the model.
 - Focus mode (View › Focus Mode, ⌘⇧F, remembered across launches) keeps every file on screen but gives the room to the active ones: a directory's sector grows with the files touched in the last 30 minutes (or still tinted), idle files bunch tightly on their ring and draw small and faint, and the layout follows activity every few seconds with the usual gliding transition.
+- Tabs: each watches one directory with its own graph, sessions, camera and hidden-file rules, shows a hue dot and a badge with the number of working sessions and, pulsing, the number waiting on you; hidden tabs keep tracking so the badge is current, and switching to one picks up with its tints intact rather than replaying every beam since. The tab set is restored on launch; `--replay` without `--dir` restores the saved tabs and shows a short message; a directory that is missing keeps its tab with a warning until it comes back or you re-point it.
 - ⌘L collapses and expands the session list.
 - ⌘, opens settings with the hook snippet, hidden-file rules and a "Worktrees" row listing each registered worktree as `name · path`.
 - Double-click a session row (or click the terminal button that appears when hovering it, or press ⌘⇧T with the row selected) to bring the iTerm2 or Terminal tab running that session to the front; a subagent row opens its parent's. If none is found, the list says so for a few seconds.
@@ -52,6 +54,8 @@ What you can check by hand:
 - `.git` churn triggers rescans (cheap).
 - Opening a session's terminal needs Automation access to iTerm2 or Terminal (macOS asks on first use) and finds only sessions on a tty one of those apps owns: tmux panes, ssh and remote sessions and other terminal apps report "No terminal window found".
 - Hover is not refreshed while panning under a still cursor.
+- Two tabs on overlapping checkouts (a repository and one of its worktrees opened as its own tab) both show the sessions and hook events that match them; a session started in a subdirectory of a checkout belongs to no tab.
+- A hidden tab's file watcher costs as much as a visible one on a busy repository. Launching the app again with `--dir` while it is running starts a second process rather than adding a tab.
 
 ## Develop
 

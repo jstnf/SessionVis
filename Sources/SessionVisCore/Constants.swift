@@ -150,4 +150,32 @@ public enum Constants {
     public static var subagentShadeCount: Int { subagentShades.count }
     /// How far up a parent chain the store walks before giving up.
     public static let maxAgentDepth = 16
+    /// The app-wide hook spool is drained on vnode events and at least this often...
+    public static let hookSpoolPollInterval: TimeInterval = 1
+    /// ...and payloads older than `hookPruneAge` are pruned every this many drains.
+    public static let hookSpoolPruneEveryTicks = 600
+
+    /// A tab revealed after being hidden advances its scene in steps this long...
+    public static let catchUpStep: TimeInterval = 0.1
+    /// ...for at most this much simulated time, which outlives every beam, pulse, ripple, particle and heat glow.
+    public static let catchUpMaxDuration: TimeInterval = 5
+    /// A hidden tab polls its store this often (the visible one uses `snapshotInterval`); aging and retirement run in the poll.
+    public static let hiddenSnapshotInterval: TimeInterval = 1
+    /// The tab strip above the scene.
+    public static let tabStripHeight: CGFloat = 30
+    /// A waiting-on-permission count in a tab badge pulses with this period.
+    public static let tabBadgePulsePeriod: TimeInterval = 1.6
+
+    /// The tab badge's waiting count redraws at most this often while it pulses.
+    public static let tabBadgePulseInterval: TimeInterval = 0.1
+    /// The waiting count's opacity swings between `tabBadgePulseFloor` and `tabBadgePulseFloor + tabBadgePulseDepth`.
+    public static let tabBadgePulseFloor: Double = 0.55
+    public static let tabBadgePulseDepth: Double = 0.45
+
+    /// The main window's size on a first launch, before there is a saved frame to restore.
+    public static let defaultWindowWidth: CGFloat = 1400
+    public static let defaultWindowHeight: CGFloat = 900
+
+    /// How long an app-level launch message (such as a refused `--replay`) stays on screen.
+    public static let launchMessageDuration: TimeInterval = 6
 }
