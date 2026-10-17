@@ -21,6 +21,7 @@ enum SceneRenderer {
         drawRipples(sim, &ctx)
         drawParticles(sim, &ctx)
         drawAvatars(sim, &ctx)
+        drawFollowRing(sim, &ctx)
         drawPulses(sim, &ctx)
         drawBadges(sim, &ctx)
         drawLabels(sim, hover: hover, &ctx, viewport)
@@ -184,7 +185,7 @@ enum SceneRenderer {
     // 4b. Ripples: a bead per lit edge of the committing agent, travelling parent → child one depth level at a time.
     private static func drawRipples(_ sim: Simulation, _ ctx: inout GraphicsContext) {
         for r in sim.ripples {
-            guard let av = sim.avatars[r.agent], av.alpha > 0.02 else { continue }
+            guard let av = sim.avatars[r.agent], av.alpha > Constants.effectMinAlpha else { continue }
             let color = av.isSubagent ? Palette.tint(r.hueIndex) : Palette.hue(r.hueIndex)
             for (path, t) in sim.edgeTints where t.toucher == r.agent {
                 guard let parent = path.parent, let a = sim.position(of: parent), let b = sim.position(of: path) else { continue }
@@ -210,7 +211,7 @@ enum SceneRenderer {
         for id in sim.avatarOrder {
             guard let av = sim.avatars[id], av.isSubagent, av.alpha > 0 else { continue }
             let p = sim.worldToScreen(av.position)
-            let r = 5.5 * av.renderScale
+            let r = Constants.orbRadiusSubagent * av.renderScale
             let tint = Palette.tint(av.hueIndex)
             glow(&ctx, at: p, radius: 3 * r, color: tint, centerAlpha: 0.55 * av.alpha)
             ctx.fill(circle(p, r), with: .color(tint.opacity(av.alpha)))
@@ -218,12 +219,23 @@ enum SceneRenderer {
         for id in sim.avatarOrder {
             guard let av = sim.avatars[id], !av.isSubagent, av.alpha > 0 else { continue }
             let p = sim.worldToScreen(av.position)
-            let r = 11 * av.renderScale
+            let r = Constants.orbRadiusMain * av.renderScale
             let hue = Palette.hue(av.hueIndex)
             let alpha: Double = { if case .idle = av.status { return av.alpha * 0.6 } else { return av.alpha } }()
             glow(&ctx, at: p, radius: 2.2 * r, color: hue, centerAlpha: 0.6 * alpha)
             ctx.fill(circle(p, r), with: .color(hue.opacity(alpha)))
         }
+    }
+
+    // 7a. Follow ring: a ring in the followed orb's colour just outside it, with a fainter echo.
+    private static func drawFollowRing(_ sim: Simulation, _ ctx: inout GraphicsContext) {
+        guard let id = sim.followedAgent, let av = sim.avatars[id], av.alpha > Constants.haloMinAlpha else { return }
+        let p = sim.worldToScreen(av.position)
+        let base: CGFloat = av.isSubagent ? Constants.orbRadiusSubagent : Constants.orbRadiusMain
+        let r = base * av.renderScale + Constants.followRingGap
+        let color = av.isSubagent ? Palette.tint(av.hueIndex) : Palette.hue(av.hueIndex)
+        ctx.stroke(circle(p, r), with: .color(color.opacity(Constants.followRingOpacity * av.alpha)), lineWidth: Constants.followRingWidth)
+        ctx.stroke(circle(p, r + Constants.followRingEchoOffset), with: .color(color.opacity(Constants.followRingEchoOpacity * av.alpha)), lineWidth: Constants.followRingWidth)
     }
 
     // 7b. Pulses: rings expanding from the orb (doubled for a push).
@@ -243,7 +255,7 @@ enum SceneRenderer {
     // 7c. Commit badges: a pill with the short hash above the orb; a push lifts it up and fades it.
     private static func drawBadges(_ sim: Simulation, _ ctx: inout GraphicsContext) {
         for id in sim.avatarOrder {
-            guard let av = sim.avatars[id], let badge = av.badge, av.alpha > 0.02 else { continue }
+            guard let av = sim.avatars[id], let badge = av.badge, av.alpha > Constants.effectMinAlpha else { continue }
             let p = sim.worldToScreen(av.position)
             let center = CGPoint(x: p.x, y: p.y - 20 - 40 * av.badgeRise)
             let alpha = Double(av.badgeAlpha) * av.alpha
@@ -289,7 +301,7 @@ enum SceneRenderer {
             }
         }
         for id in sim.avatarOrder {
-            guard let av = sim.avatars[id], av.alpha > 0.02 else { continue }
+            guard let av = sim.avatars[id], av.alpha > Constants.effectMinAlpha else { continue }
             let p = sim.worldToScreen(av.position)
             if av.isSubagent {
                 ctx.draw(Text(av.title).font(mono9).foregroundStyle(Palette.tint(av.hueIndex).opacity(0.85 * av.alpha * av.scale)),
@@ -301,7 +313,7 @@ enum SceneRenderer {
         }
         var stack: [AgentID: Int] = [:]
         for p in sim.pulses where p.labelAlpha > 0 {
-            guard let av = sim.avatars[p.agent], av.alpha > 0.02 else { continue }
+            guard let av = sim.avatars[p.agent], av.alpha > Constants.effectMinAlpha else { continue }
             let i = stack[p.agent, default: 0]
             stack[p.agent] = i + 1
             let o = sim.worldToScreen(av.position)

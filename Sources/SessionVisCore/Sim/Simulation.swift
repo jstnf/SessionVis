@@ -160,7 +160,6 @@ public struct Simulation: Sendable {
     static let driftAmplitude: CGFloat = 15
     static let spawnDuration: TimeInterval = 0.3
     static let motionRate: Double = 2.0
-    static let followRate: Double = 3.0
     static let fitMargin: CGFloat = 1.1
     static let avatarHitRadius: CGFloat = 14
     static let nodeHitRadius: CGFloat = 8
@@ -193,10 +192,13 @@ public struct Simulation: Sendable {
                 avatarOrder.append(a.id)
             }
         }
+        var followHandoff: AgentID?
         for id in avatarOrder where !seen.contains(id) {
+            if id == followedAgent { followHandoff = avatars[id]?.parent }
             avatars.removeValue(forKey: id)
             recentTouches.removeValue(forKey: id)
         }
+        if let parent = followHandoff, avatars[parent] != nil, seen.contains(parent) { followedAgent = parent }
         avatarOrder.removeAll { !seen.contains($0) }
         let priming = !primed
         ingest(touches: snapshot.recentTouches.filter { $0.seq > lastTouchSeq }, now: now)
@@ -386,7 +388,7 @@ public struct Simulation: Sendable {
         guard let m = avatars[main], !m.isSubagent else { return [] }
         var pts = [m.position]
         for id in avatarOrder {
-            if let s = avatars[id], s.isSubagent, s.parent == main, s.alpha > 0.03 { pts.append(s.position) }
+            if let s = avatars[id], s.isSubagent, s.parent == main, s.alpha > Constants.haloMinAlpha { pts.append(s.position) }
         }
         return pts
     }
@@ -568,7 +570,10 @@ public struct Simulation: Sendable {
             avatars[id] = av
         }
         for id in avatarOrder {
-            if let av = avatars[id], av.status == .ended, av.alpha <= 0 { avatars.removeValue(forKey: id) }
+            if let av = avatars[id], av.status == .ended, av.alpha <= 0 {
+                avatars.removeValue(forKey: id)
+                if id == followedAgent, let parent = av.parent, avatars[parent] != nil { followedAgent = parent }
+            }
         }
         avatarOrder.removeAll { avatars[$0] == nil }
 
@@ -576,8 +581,9 @@ public struct Simulation: Sendable {
         updateTreeTransitions(dt: dt)
 
         if let f = followedAgent, avatars[f] == nil { followedAgent = nil }
-        if let f = followedAgent, let av = avatars[f] {
-            camera.center = Geometry.lerp(camera.center, av.position, CGFloat(min(1, dt * Self.followRate)))
+        if let f = followedAgent, let t = followTarget(for: f) {
+            camera.center = Geometry.lerp(camera.center, t.center, CGFloat(min(1, dt * Constants.followCenterRate)))
+            camera.zoom += (t.zoom - camera.zoom) * CGFloat(min(1, dt * Constants.followZoomRate))
         }
         if followedAgent == nil, !camera.userAdjusted, let t = fitTarget(for: fitBounds()) {
             let k = CGFloat(min(1, dt * 2))
@@ -611,10 +617,52 @@ public struct Simulation: Sendable {
 
     public mutating func setViewSize(_ size: CGSize) {
         viewSize = size
-        if !camera.userAdjusted { fitCamera() }
+        if !camera.userAdjusted, followedAgent == nil { fitCamera() }
     }
 
     public mutating func setFollow(_ id: AgentID?) { followedAgent = id }
+
+    /// Ends the follow and keeps the camera where it is; auto-fit stays off until the next double-click.
+    public mutating func stopFollowing() {
+        guard followedAgent != nil else { return }
+        followedAgent = nil
+        camera.userAdjusted = true
+    }
+
+    /// The zoom and centre that frame a followed agent: its main's halo (a subagent frames its parent's) plus the files
+    /// any member touched recently, padded, with the zoom clamped so a lone orb is not magnified past recognition.
+    public func followTarget(for id: AgentID) -> (zoom: CGFloat, center: CGPoint)? {
+        guard let av = avatars[id], viewSize.width > 0, viewSize.height > 0 else { return nil }
+        let main: AgentID? = av.isSubagent ? av.parent.flatMap { avatars[$0] == nil ? nil : $0 } : id
+        var pts = main.map { haloPoints(for: $0) } ?? []
+        if pts.isEmpty { pts = [av.position] }
+        var members: Set<AgentID> = [id]
+        if let main {
+            members.insert(main)
+            for other in avatarOrder {
+                if let s = avatars[other], s.parent == main, s.alpha > Constants.haloMinAlpha { members.insert(other) }
+            }
+        }
+        for m in members {
+            for ref in recentTouches[m] ?? [] where tree.nodes[ref.path]?.isDirectory != true {
+                if let p = layout.position(ref.path) { pts.append(p) }
+            }
+        }
+        var box = CGRect(origin: pts[0], size: .zero)
+        for p in pts.dropFirst() { box = box.union(CGRect(origin: p, size: .zero)) }
+        box = box.insetBy(dx: -Constants.followPadding, dy: -Constants.followPadding)
+        let z = min(viewSize.width / (box.width * Self.fitMargin), viewSize.height / (box.height * Self.fitMargin))
+        let clamped = min(Constants.followMaxZoom, max(Constants.followMinZoom, z))
+        // The box midpoint is the centre, shifted by the least amount that keeps the orb inside the view (less the margin)
+        // at this zoom; the shift is zero while the box fits and grows continuously with the overflow.
+        func shifted(_ mid: CGFloat, _ orb: CGFloat, _ extent: CGFloat) -> CGFloat {
+            let limit = max(0, (extent / 2 - Constants.followOrbMargin) / clamped)
+            let d = orb - mid
+            return abs(d) <= limit ? mid : mid + d - (d < 0 ? -limit : limit)
+        }
+        let center = CGPoint(x: shifted(box.midX, av.position.x, viewSize.width), y: shifted(box.midY, av.position.y, viewSize.height))
+        return (clamped, center)
+    }
 
     public mutating func resetCamera() {
         camera.userAdjusted = false

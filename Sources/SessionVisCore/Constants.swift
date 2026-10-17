@@ -76,4 +76,29 @@ public enum Constants {
 
     /// How many suffix patterns Settings offers as one-click hidden-file rules.
     public static let filterSuggestionLimit = 12
+
+    /// Following a session frames its orb, its halo and its recent touches within this zoom range, padded in world points.
+    public static let followMinZoom: CGFloat = 0.6
+    public static let followMaxZoom: CGFloat = 2.5
+    public static let followPadding: CGFloat = 80
+    /// Per-second easing rates toward the follow frame; the zoom eases slower so a spreading session does not breathe.
+    public static let followCenterRate: Double = 3.0
+    public static let followZoomRate: Double = 1.2
+    /// Orb radii at render scale 1, shared by the orbs and the follow ring.
+    public static let orbRadiusMain: CGFloat = 11
+    public static let orbRadiusSubagent: CGFloat = 5.5
+    /// The ring drawn just outside the followed orb.
+    public static let followRingGap: CGFloat = 5
+    public static let followRingWidth: CGFloat = 1.2
+    /// Ripples, badges and labels are not drawn for an avatar at or below this alpha.
+    public static let effectMinAlpha: Double = 0.02
+    /// The followed orb stays at least this far inside the view edge, in screen points.
+    public static let followOrbMargin: CGFloat = 40
+    /// An avatar at or below this alpha is treated as gone: no ring, no halo point, no part in the follow frame.
+    public static let haloMinAlpha: Double = 0.03
+    /// The echo ring sits this far outside the main ring, in points.
+    public static let followRingEchoOffset: CGFloat = 2
+    /// Opacities of the main ring and its echo, before the orb's own alpha.
+    public static let followRingOpacity: Double = 0.9
+    public static let followRingEchoOpacity: Double = 0.25
 }

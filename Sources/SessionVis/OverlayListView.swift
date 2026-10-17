@@ -93,6 +93,7 @@ private struct SessionRow: View {
                 HStack(spacing: 6) {
                     Circle().fill(Palette.status(agent.status)).frame(width: 8, height: 8)
                     Text(agent.title).font(.system(size: 11, design: .monospaced)).foregroundStyle(Palette.text).lineLimit(1).truncationMode(.tail)
+                    if selected { followGlyph }
                 }
                 Text(statusLine).font(.system(size: 10, design: .monospaced)).foregroundStyle(Palette.status(agent.status))
                 if case .working = agent.status, let cmd = agent.lastCommandLabel {
@@ -131,7 +132,10 @@ private struct SubagentRow: View {
             Rectangle().fill(Palette.edge).frame(width: 1).padding(.leading, 12)
             Circle().fill(Palette.tint(agent.hueIndex)).frame(width: 6, height: 6)
             VStack(alignment: .leading, spacing: 1) {
-                Text(agent.title).font(.system(size: 10, design: .monospaced)).foregroundStyle(Palette.textSecondary).lineLimit(1).truncationMode(.tail)
+                HStack(spacing: 4) {
+                    Text(agent.title).font(.system(size: 10, design: .monospaced)).foregroundStyle(Palette.textSecondary).lineLimit(1).truncationMode(.tail)
+                    if selected { followGlyph }
+                }
                 if let milestone = agent.lastMilestone {
                     Text(milestone.line).font(.system(size: 9, design: .monospaced)).foregroundStyle(Palette.textSecondary)
                         .lineLimit(1).truncationMode(.tail)
@@ -147,4 +151,12 @@ private struct SubagentRow: View {
         .opacity(agent.status.isEnded ? 0.4 : 1)
         .animation(.easeOut(duration: Constants.endedLinger), value: agent.status.isEnded)
     }
+}
+
+/// Marks the row of the agent the camera is following.
+private var followGlyph: some View {
+    Image(systemName: "scope")
+        .font(.system(size: 9, weight: .semibold))
+        .foregroundStyle(Palette.text)
+        .help("Following · Esc stops")
 }

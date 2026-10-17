@@ -30,6 +30,7 @@ final class SimulationBox {
     func zoom(by factor: CGFloat, around point: CGPoint) { simulation.zoom(by: factor, around: point) }
     func resetCamera() { simulation.resetCamera() }
     func setFollow(_ id: AgentID?) { simulation.setFollow(id) }
+    func stopFollowing() { simulation.stopFollowing() }
     func setFilter(_ filter: FileFilter) {
         simulation.setFilter(filter)
         SceneRenderer.resetCaches()

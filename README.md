@@ -12,7 +12,7 @@ A native macOS visualiser for live Claude Code sessions. Point it at a directory
 
 The directory must be passed with `--dir`; a bare path argument is treated by AppKit as a document to open and no window appears.
 
-Trackpad scroll pans, pinch zooms, double-click refits. Click a session in the list to follow it. ⌘L collapses the list, ⌘O opens another directory, ⌘, shows settings: the optional hook snippet for exact "waiting on permission" states, and hidden-file rules.
+Trackpad scroll pans, pinch zooms, double-click refits. Click a session in the list or its orb to follow it; Tab and Shift-Tab step the follow through the live sessions, Escape stops it where the view is (the Session menu has the same three actions as ⌘], ⌘[ and ⌘.). ⌘L collapses the list, ⌘O opens another directory, ⌘, shows settings: the optional hook snippet for exact "waiting on permission" states, and hidden-file rules.
 
 ## Privacy
 
@@ -34,6 +34,7 @@ What you can check by hand:
 - Reads and writes done through shell commands count as touches: operands of `cat`, `head`, `tail`, `sed`, `awk`, `grep`, `rg`, `ls`, `find`, `diff`, `cp`, `mv`, `tee`, `touch` and redirections, resolved against the command's `cd` and the session's directory; a read counts only if the file or directory exists. A search or listing lights the directory it ran in. A file that changes on disk while exactly one agent is running a command is credited to that agent as a write. The tooltip names the source of each touch.
 - Settings has a Hidden files section: gitignore-like glob patterns (no negation or comments) (`*.graphql.swift`, `Generated`, `Sources/**/Mocks`) hide matching files from the graph, with one-click suggestions from the most common file suffixes. Rules are kept per directory, apply the moment they are toggled without a rescan, and a session's touch on a hidden file is still counted in the tooltip but drawn nowhere.
 - A subagent fades out within a few seconds of finishing, whether it ran in the foreground or in the background (its final hand-back call and the parent's task notification both count as the end).
+- Following a session zooms the camera to frame its orb, its subagents and the files it touched in the last 20 seconds, within a fixed zoom range, and rings the orb; the list row shows a scope glyph. Tab and Shift-Tab cycle the follow through live sessions, Escape stops it without moving the view, a pan or pinch stops it too.
 - ⌘L collapses and expands the session list.
 - ⌘, opens settings with the hook snippet, hidden-file rules and a "Worktrees" row listing each registered worktree as `name · path`.
 

@@ -11,7 +11,8 @@ struct ContentView: View {
             InputCaptureView(onScroll: model.handleScroll,
                              onMagnify: model.handleMagnify,
                              onMove: model.handleMove,
-                             onClick: model.handleClick)
+                             onClick: model.handleClick,
+                             onKey: model.handleKey)
             TooltipView(model: model)
             GeometryReader { geo in
                 VStack {

@@ -57,6 +57,18 @@ struct SessionVisApp: App {
                 Button(model.listCollapsed ? "Show Session List" : "Collapse Session List") { model.listCollapsed.toggle() }
                     .keyboardShortcut("l")
             }
+            CommandMenu("Session") {
+                Button("Follow Next Session") { model.followNext() }
+                    .keyboardShortcut("]")
+                    .disabled(!model.hasLiveMain || model.isLoading)
+                Button("Follow Previous Session") { model.followPrevious() }
+                    .keyboardShortcut("[")
+                    .disabled(!model.hasLiveMain || model.isLoading)
+                Divider()
+                Button("Stop Following") { model.stopFollowing() }
+                    .keyboardShortcut(".")
+                    .disabled(!model.isFollowing)
+            }
         }
         Settings {
             SettingsSheet(model: model)

@@ -23,6 +23,8 @@ final class AppModel {
     var suggestions: [Suggestion] = []
     /// True from source start until it reports `.initialLoadComplete`; the scene is not fed meanwhile.
     var isLoading = false
+    /// Whether any main session is live; stored so the Session menu does not re-evaluate on every snapshot.
+    var hasLiveMain = false
     let projectsRoot = SessionDiscovery.projectsRoot()
     let box = SimulationBox()
 
@@ -42,6 +44,21 @@ final class AppModel {
     static let lastDirectoryKey = "lastDirectory"
 
     var mains: [AgentSnapshot] { snapshot.agents.filter { !$0.isSubagent } }
+    /// Main sessions that have not ended, in list order: what Tab steps through.
+    var liveMains: [AgentID] { mains.filter { !$0.status.isEnded }.map(\.id) }
+    var isFollowing: Bool { selectedAgent != nil }
+    /// The main session the follow is on: the followed main itself, or a followed subagent's parent.
+    private var followedMain: AgentID? {
+        guard let id = selectedAgent else { return nil }
+        guard let a = snapshot.agents.first(where: { $0.id == id }) else { return id }
+        return a.parent ?? a.id
+    }
+    /// Where the followed main last sat in `liveMains`, kept by the snapshot poll alone, so Tab can carry on from that slot once it ends.
+    @ObservationIgnored private var followedIndex: Int?
+    private func rememberFollowedIndex() {
+        if selectedAgent == nil { followedIndex = nil }
+        else if let m = followedMain, let i = liveMains.firstIndex(of: m) { followedIndex = i }
+    }
     var subagentCount: Int { snapshot.agents.count - mains.count }
     var windowTitle: String { directory.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "SessionVis" }
     var windowSubtitle: String {
@@ -202,7 +219,12 @@ final class AppModel {
                 if visible != self.treeFileCount { self.treeFileCount = visible }
                 let hiddenCount = self.box.simulation.hiddenFileCount
                 if hiddenCount != self.hiddenFileCount { self.hiddenFileCount = hiddenCount }
-                if let sel = self.selectedAgent, !snap.agents.contains(where: { $0.id == sel }) { self.selectedAgent = nil }
+                // Selection mirrors the follow: the simulation hands it to the parent when a subagent vanishes and drops it
+                // when the orb vanishes or a pan or pinch cancels it.
+                if !self.isLoading, self.selectedAgent != self.box.simulation.followedAgent { self.selectedAgent = self.box.simulation.followedAgent }
+                self.rememberFollowedIndex()
+                let live = !self.liveMains.isEmpty
+                if live != self.hasLiveMain { self.hasLiveMain = live }
                 // While loading, the list may update but the scene waits, so history lands as one priming pass.
                 if !self.isLoading { self.box.apply(snap, now: Date()) }
                 try? await Task.sleep(for: .seconds(Constants.snapshotInterval))
@@ -341,7 +363,35 @@ final class AppModel {
         }
     }
 
+    func followNext() { step(forward: true) }
+    func followPrevious() { step(forward: false) }
+
+    private func step(forward: Bool) {
+        guard !isLoading else { return }
+        follow(FollowCycle.next(after: followedMain, lastIndex: followedIndex, in: liveMains, forward: forward))
+    }
+
+    private func follow(_ id: AgentID?) {
+        guard let id else { return }
+        selectedAgent = id
+        box.setFollow(id)
+    }
+
+    /// Escape and the menu: the follow ends and the camera stays put.
+    func stopFollowing() {
+        selectedAgent = nil
+        box.stopFollowing()
+    }
+
     // MARK: - Input
+
+    func handleKey(_ command: KeyCommand) {
+        switch command {
+        case .followNext: followNext()
+        case .followPrevious: followPrevious()
+        case .stopFollowing: stopFollowing()
+        }
+    }
 
     func handleScroll(_ delta: CGSize) {
         box.pan(by: delta)
