@@ -24,8 +24,11 @@ extension Simulation {
         filter = newFilter
         let toHide = tree.nodes.values.filter { !$0.isDirectory && newFilter.hides($0.path) }
         for node in toHide {
-            if dying[node.path] == nil { hidden[node.path] = node.origins }   // a file already deleted from disk is not worth remembering
+            let deleted = dying[node.path] != nil   // a file already deleted from disk is not worth remembering
+            if !deleted { hidden[node.path] = node.origins }
+            let touched = lastTouchAt[node.path]
             finishDeath(node.path)
+            if !deleted, let touched { lastTouchAt[node.path] = touched }   // activity outlives hiding
         }
         relightEdges(above: toHide.map(\.path))
         let toShow = hidden.filter { !newFilter.hides($0.key) }

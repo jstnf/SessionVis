@@ -125,4 +125,18 @@ public enum Constants {
     /// The context ring sits this far outside the orb's edge.
     public static let contextRingGap: CGFloat = 3
     public static let contextRingWidth: CGFloat = 1.5
+    /// Focus mode. A file is active when touched within this window (or while it still carries a tint)...
+    public static let focusActiveWindow: TimeInterval = 30 * 60
+    /// ...the active set is re-judged this often, relaying the tree out only when it changed...
+    public static let focusRelayoutInterval: TimeInterval = 3
+    /// ...a directory's sector weighs its active files plus this much per file it holds...
+    public static let focusInactiveWeight: CGFloat = 0.02
+    /// ...an inactive file takes this much of its ring instead of `fileSpacing`...
+    public static let focusInactiveSpacing: CGFloat = 1.5
+    /// ...sibling directories are laid out at least this far apart on their ring, however idle...
+    public static let focusMinSiblingSpacing: CGFloat = 16
+    /// ...and is drawn this faint and this small, as is the edge to it.
+    public static let focusInactiveAlpha: Double = 0.15
+    /// Radius of an inactive file's dot in screen points (unlike `focusInactiveSpacing`, which is world units).
+    public static let focusInactiveRadius: CGFloat = 1.0
 }

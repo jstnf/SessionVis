@@ -51,7 +51,7 @@ enum SceneRenderer {
 
     // 1. Edges: plain grey batched, lit edges batched per hue/level (blended toward the hue and widened by strength), dying ones last.
     private static func drawEdges(_ sim: Simulation, _ ctx: inout GraphicsContext, _ viewport: CGRect) {
-        var path = Path(), ghostPath = Path()
+        var path = Path(), ghostPath = Path(), faintGhostPath = Path(), faint = Path()
         var lit: [TintKey: Path] = [:], ghostLit: [TintKey: Path] = [:]
         var fading: [(Path, Double)] = []
         for node in sim.tree.nodes.values {
@@ -70,13 +70,17 @@ enum SceneRenderer {
                 if ghost { ghostLit[TintKey(hue: t.hueIndex, level: level), default: Path()].addPath(seg) }
                 else { lit[TintKey(hue: t.hueIndex, level: level), default: Path()].addPath(seg) }
             } else if ghost {
-                ghostPath.addPath(seg)
+                if sim.focusMode, !sim.isActive(node.path) { faintGhostPath.addPath(seg) } else { ghostPath.addPath(seg) }
+            } else if sim.focusMode, !node.isDirectory, !sim.isActive(node.path) {
+                faint.addPath(seg)
             } else {
                 path.addPath(seg)
             }
         }
         ctx.stroke(path, with: .color(Palette.edge), lineWidth: Constants.edgeWidth)
+        ctx.stroke(faint, with: .color(Palette.edge.opacity(Constants.focusInactiveAlpha)), lineWidth: Constants.edgeWidth)
         ctx.stroke(ghostPath, with: .color(Palette.edge), style: StrokeStyle(lineWidth: Constants.edgeWidth, dash: Constants.ghostDash))
+        ctx.stroke(faintGhostPath, with: .color(Palette.edge.opacity(Constants.focusInactiveAlpha)), style: StrokeStyle(lineWidth: Constants.edgeWidth, dash: Constants.ghostDash))
         for (key, seg) in lit {
             let strength = Double(key.level) / Double(tintLevels)
             ctx.stroke(seg, with: .color(Palette.mix(Palette.edgeRGB, HuePalette.hue(key.hue), strength)),
@@ -92,7 +96,7 @@ enum SceneRenderer {
 
     // 2. Nodes: glows per hot node, then batched fills (untouched files; directories and touched files; tinted files per hue/level).
     private static func drawNodes(_ sim: Simulation, _ ctx: inout GraphicsContext, _ viewport: CGRect) {
-        var dim = Path(), bright = Path(), ghostRings = Path()
+        var dim = Path(), bright = Path(), faint = Path(), ghostRings = Path(), faintGhostRings = Path()
         var tinted: [TintKey: Path] = [:], ghostTinted: [TintKey: Path] = [:]
         var landingRings: [(Path, Double)] = []
         for node in sim.tree.nodes.values {
@@ -122,20 +126,29 @@ enum SceneRenderer {
             if node.isGhost {
                 if let t = sim.tint(node.path), case let level = Int((t.strength * CGFloat(tintLevels)).rounded()), level > 0 {
                     ghostTinted[TintKey(hue: t.hueIndex, level: level), default: Path()].addEllipse(in: ringRect)
+                } else if sim.focusMode, !sim.isActive(node.path) { faintGhostRings.addEllipse(in: ringRect)
                 } else { ghostRings.addEllipse(in: ringRect) }
                 continue
             }
             if sim.isLanding(node.path) { landingRings.append((Path(ellipseIn: ringRect), Double(1 - scale))) }
             if let t = sim.tint(node.path), case let level = Int((t.strength * CGFloat(tintLevels)).rounded()), level > 0 {
                 tinted[TintKey(hue: t.hueIndex, level: level), default: Path()].addEllipse(in: rect)
+            } else if sim.focusMode {
+                // Activity decides; a fresh touch is tinted above and so bright before the next re-judgement.
+                if sim.isActive(node.path) { bright.addEllipse(in: rect) } else {
+                    let fr = Constants.focusInactiveRadius * scale
+                    faint.addEllipse(in: CGRect(x: p.x - fr, y: p.y - fr, width: 2 * fr, height: 2 * fr))
+                }
             } else if sim.touchedPaths.contains(node.path) { bright.addEllipse(in: rect) } else { dim.addEllipse(in: rect) }
         }
         ctx.fill(dim, with: .color(Palette.node.opacity(0.6)))
+        ctx.fill(faint, with: .color(Palette.node.opacity(Constants.focusInactiveAlpha)))
         ctx.fill(bright, with: .color(Palette.node))
         for (key, path) in tinted {
             ctx.fill(path, with: .color(Palette.mix(Palette.nodeRGB, HuePalette.hue(key.hue), Double(key.level) / Double(tintLevels))))
         }
         ctx.stroke(ghostRings, with: .color(Palette.ghost), lineWidth: Constants.ghostRingWidth)
+        ctx.stroke(faintGhostRings, with: .color(Palette.ghost.opacity(Constants.focusInactiveAlpha)), lineWidth: Constants.ghostRingWidth)
         for (key, path) in ghostTinted {
             ctx.stroke(path, with: .color(Palette.mix(Palette.nodeRGB, HuePalette.hue(key.hue), Double(key.level) / Double(tintLevels))), lineWidth: Constants.ghostRingWidth)
         }

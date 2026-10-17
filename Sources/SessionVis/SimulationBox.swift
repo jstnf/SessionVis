@@ -7,8 +7,8 @@ final class SimulationBox {
     private(set) var simulation = Simulation(tree: FileTree(files: []))
     private var lastFrame: Date?
 
-    func reset(tree: FileTree, folder: PathFolder?, filter: FileFilter) {
-        simulation = Simulation(tree: tree, filter: filter, viewSize: simulation.viewSize)
+    func reset(tree: FileTree, folder: PathFolder?, filter: FileFilter, focusMode: Bool = false) {
+        simulation = Simulation(tree: tree, filter: filter, viewSize: simulation.viewSize, focusMode: focusMode)
         simulation.folder = folder
         lastFrame = nil
         SceneRenderer.resetCaches()
@@ -31,6 +31,7 @@ final class SimulationBox {
     func resetCamera() { simulation.resetCamera() }
     func setFollow(_ id: AgentID?) { simulation.setFollow(id) }
     func stopFollowing() { simulation.stopFollowing() }
+    func setFocusMode(_ on: Bool) { simulation.setFocusMode(on) }
     func setFilter(_ filter: FileFilter) {
         simulation.setFilter(filter)
         SceneRenderer.resetCaches()

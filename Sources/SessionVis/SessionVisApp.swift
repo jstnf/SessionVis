@@ -59,6 +59,8 @@ struct SessionVisApp: App {
                 Button("Open Terminal") { if let id = model.selectedAgent { model.openTerminal(for: id) } }
                     .keyboardShortcut("t", modifiers: [.command, .shift])
                     .disabled(!model.canOpenSelectedTerminal)
+                Toggle("Focus Mode", isOn: Binding(get: { model.focusMode }, set: { model.setFocusMode($0) }))
+                    .keyboardShortcut("f", modifiers: [.command, .shift])
             }
             CommandMenu("Session") {
                 Button("Follow Next Session") { model.followNext() }

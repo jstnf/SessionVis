@@ -52,6 +52,8 @@ public actor SessionStore {
     private var toolUseOwner: [String: AgentID] = [:]        // tool_use id → agent that issued it
     private var subagentByToolUseId: [String: AgentID] = [:]  // meta.toolUseId → subagent
     private var touches: [Touch] = []
+    /// Newest file-scope touch per path, unbounded by the touch ring and pruned to the focus window when published.
+    private var lastFileTouch: [RepoPath: Date] = [:]
     private var nextSeq: UInt64 = 1
     private var commands: [CommandEvent] = []
     private var nextCommandSeq: UInt64 = 1
@@ -414,7 +416,9 @@ public actor SessionStore {
                               context: r.contextTokens.map { ContextUsage(tokens: TokenFormat.quantise($0), window: r.window) },
                               tokens: r.lastUsage == nil ? nil : TokenTotals(input: TokenFormat.quantise(r.inputTotal), output: TokenFormat.quantise(r.outputTotal)))
             }
-        return StoreSnapshot(agents: list, recentTouches: touches, recentCommands: commands, hookEventsSeenAt: hookEventsSeenAt, skippedLines: skippedLines)
+        let now = clock()
+        lastFileTouch = lastFileTouch.filter { now.timeIntervalSince($0.value) <= Constants.focusActiveWindow }
+        return StoreSnapshot(agents: list, recentTouches: touches, recentCommands: commands, hookEventsSeenAt: hookEventsSeenAt, skippedLines: skippedLines, activeFiles: lastFileTouch)
     }
 
     // MARK: - Helpers
@@ -488,6 +492,7 @@ public actor SessionStore {
                              at: t, hueIndex: rec.hueIndex, agentTitle: rec.title))
         nextSeq += 1
         rec.touchCount += 1
+        if scope == .file { lastFileTouch[path] = max(lastFileTouch[path] ?? .distantPast, t) }
         if touches.count > Constants.recentTouchLimit { touches.removeFirst(touches.count - Constants.recentTouchLimit) }
     }
 

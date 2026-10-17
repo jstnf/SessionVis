@@ -23,6 +23,8 @@ final class AppModel {
     var filter = FileFilter()
     var hiddenFileCount = 0
     var suggestions: [Suggestion] = []
+    /// Focus mode: the layout gives the room to the files sessions are working in. A way of looking, kept across directories.
+    var focusMode = UserDefaults.standard.bool(forKey: AppModel.focusModeKey)
     /// True from source start until it reports `.initialLoadComplete`; the scene is not fed meanwhile.
     var isLoading = false
     /// Whether any main session is live; stored so the Session menu does not re-evaluate on every snapshot.
@@ -46,6 +48,7 @@ final class AppModel {
     @ObservationIgnored var terminalTask: Task<Void, Never>?
     @ObservationIgnored var terminalMessageTask: Task<Void, Never>?
     static let lastDirectoryKey = "lastDirectory"
+    static let focusModeKey = "focusMode"
 
     var mains: [AgentSnapshot] { snapshot.agents.filter { !$0.isSubagent } }
     /// Main sessions that have not ended, in list order: what Tab steps through.
@@ -69,6 +72,7 @@ final class AppModel {
         guard let d = directory else { return "Open a directory to begin" }
         var s = "\(d) · \(mains.count) sessions · \(subagentCount) subagents · \(treeFileCount) files"
         if treeTruncated { s += " · truncated" }
+        if focusMode { s += " · focus" }
         if isReplay { s += " · replay" }
         return s
     }
@@ -207,7 +211,8 @@ final class AppModel {
 
     private func applyTree(_ tree: FileTree, folder: PathFolder) {
         treeTruncated = tree.truncated
-        box.reset(tree: tree, folder: folder, filter: filter)
+        box.reset(tree: tree, folder: folder, filter: filter, focusMode: focusMode)
+        box.setFocusMode(focusMode)
         treeFileCount = box.simulation.visibleFileCount
         hiddenFileCount = box.simulation.hiddenFileCount
     }
@@ -355,6 +360,15 @@ final class AppModel {
     func refreshSuggestions() {
         let sim = box.simulation
         suggestions = FileFilter.suggestions(for: sim.tree.files.union(sim.hidden.keys), excluding: filter, limit: Constants.filterSuggestionLimit)
+    }
+
+    // MARK: - Focus mode
+
+    func setFocusMode(_ on: Bool) {
+        guard on != focusMode else { return }
+        focusMode = on
+        UserDefaults.standard.set(on, forKey: Self.focusModeKey)
+        box.setFocusMode(on)
     }
 
     // MARK: - Selection

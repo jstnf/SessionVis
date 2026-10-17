@@ -113,10 +113,13 @@ public struct StoreSnapshot: Equatable, Sendable {
     public var recentCommands: [CommandEvent]
     public var hookEventsSeenAt: Date?
     public var skippedLines: Int
+    /// When each file was last read, written or edited, for files touched within the focus window. Unlike `recentTouches` it is not capped.
+    public var activeFiles: [RepoPath: Date]
 
-    public init(agents: [AgentSnapshot] = [], recentTouches: [Touch] = [], recentCommands: [CommandEvent] = [], hookEventsSeenAt: Date? = nil, skippedLines: Int = 0) {
+    public init(agents: [AgentSnapshot] = [], recentTouches: [Touch] = [], recentCommands: [CommandEvent] = [], hookEventsSeenAt: Date? = nil, skippedLines: Int = 0, activeFiles: [RepoPath: Date] = [:]) {
         self.agents = agents; self.recentTouches = recentTouches; self.recentCommands = recentCommands
         self.hookEventsSeenAt = hookEventsSeenAt; self.skippedLines = skippedLines
+        self.activeFiles = activeFiles
     }
     public static let empty = StoreSnapshot()
 }

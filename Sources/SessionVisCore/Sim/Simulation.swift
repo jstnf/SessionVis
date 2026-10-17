@@ -113,6 +113,15 @@ public struct Simulation: Sendable {
     /// Rules the user set; the files they hide are kept out of `tree` and remembered in `hidden` with their origins.
     public internal(set) var filter: FileFilter
     public internal(set) var hidden: [RepoPath: Set<Origin>] = [:]
+    /// Focus mode weighs the layout by activity; the files the current layout treats as active are kept here.
+    public internal(set) var focusMode = false
+    public internal(set) var activeFiles: Set<RepoPath> = []
+    /// When each file was last touched, kept past the tint's life so activity is judged over a longer window.
+    public internal(set) var lastTouchAt: [RepoPath: Date] = [:]
+    /// Files whose only tint comes from a search (Grep, Glob, rg, ls): lit, but not activity.
+    var searchTinted: Set<RepoPath> = []
+    /// Simulation time of the next activity re-judgement while focus is on.
+    var nextFocusRefresh: TimeInterval = 0
     public private(set) var layout: RadialLayout
     public private(set) var avatars: [AgentID: AvatarState] = [:]
     public private(set) var avatarOrder: [AgentID] = []
@@ -166,12 +175,14 @@ public struct Simulation: Sendable {
     static let avatarHitRadius: CGFloat = 14
     static let nodeHitRadius: CGFloat = 8
 
-    public init(tree: FileTree, filter: FileFilter = FileFilter(), viewSize: CGSize = CGSize(width: 800, height: 500)) {
+    public init(tree: FileTree, filter: FileFilter = FileFilter(), viewSize: CGSize = CGSize(width: 800, height: 500), focusMode: Bool = false) {
         let (visible, hidden) = Self.partition(tree, by: filter)
         self.tree = visible
         self.filter = filter
         self.hidden = hidden
-        self.layout = RadialLayout.compute(visible)
+        self.focusMode = focusMode
+        self.layout = RadialLayout.compute(visible, active: focusMode ? [] : nil)
+        if focusMode { nextFocusRefresh = Constants.focusRelayoutInterval }
         self.renderPositions = layout.positions
         self.viewSize = viewSize
         rebuildGrid()
@@ -203,8 +214,10 @@ public struct Simulation: Sendable {
         }
         if let parent = followHandoff, avatars[parent] != nil, seen.contains(parent) { followedAgent = parent }
         avatarOrder.removeAll { !seen.contains($0) }
+        for (path, at) in snapshot.activeFiles where !filter.hides(path) && at > (lastTouchAt[path] ?? .distantPast) { lastTouchAt[path] = at }
         let priming = !primed
         ingest(touches: snapshot.recentTouches.filter { $0.seq > lastTouchSeq }, now: now)
+        if priming, focusMode { nextFocusRefresh = time }
         ingest(commands: snapshot.recentCommands, now: now, priming: priming)
     }
 
@@ -270,6 +283,12 @@ public struct Simulation: Sendable {
                 target = self.target(for: t.path)
             }
             touchedPaths.insert(target)
+            if t.scope == .file {
+                searchTinted.remove(target)
+                if tree.node(target)?.isDirectory == false { lastTouchAt[target] = max(lastTouchAt[target] ?? .distantPast, t.at) }
+            } else if lastTouchAt[target] == nil, tints[target] == nil {
+                searchTinted.insert(target)
+            }
             recentTouches[t.agent, default: []].append(TouchRef(path: target, at: t.at))
             avatars[t.agent]?.lastTouchPath = target
             lastTouchSeq = max(lastTouchSeq, t.seq)
@@ -407,7 +426,7 @@ public struct Simulation: Sendable {
     /// Recomputes the layout; existing nodes keep their render position and ease to the new one. New nodes start at `startPositions[path]`, else at their parent directory's render position, else at their layout position.
     mutating func relayout(startPositions: [RepoPath: CGPoint] = [:]) {
         treeVersion += 1
-        layout = RadialLayout.compute(tree)
+        layout = RadialLayout.compute(tree, active: focusMode ? activeFiles : nil)
         rebuildGrid()
         let fresh = layout.positions.filter { renderPositions[$0.key] == nil }.sorted { $0.key.depth < $1.key.depth }
         for (path, target) in fresh {
@@ -428,7 +447,7 @@ public struct Simulation: Sendable {
     /// Cleanup shared by the end of the death fade and by name-swap conflicts. No relayout.
     mutating func finishDeath(_ path: RepoPath) {
         dying.removeValue(forKey: path); born.removeValue(forKey: path); landing.remove(path); renderPositions.removeValue(forKey: path)
-        heat.removeValue(forKey: path); tints.removeValue(forKey: path); edgeTints.removeValue(forKey: path); touchedPaths.remove(path)
+        heat.removeValue(forKey: path); tints.removeValue(forKey: path); edgeTints.removeValue(forKey: path); touchedPaths.remove(path); lastTouchAt.removeValue(forKey: path); searchTinted.remove(path)
         tree.remove(file: path)
     }
 
@@ -465,12 +484,14 @@ public struct Simulation: Sendable {
             tree.remove(file: m.from)
             renderPositions.removeValue(forKey: m.from); heat.removeValue(forKey: m.from); if touchedPaths.remove(m.from) != nil { touchedPaths.insert(m.to) }; dying.removeValue(forKey: m.from); born.removeValue(forKey: m.from); landing.remove(m.from)
             if let t = tints.removeValue(forKey: m.from) { tints[m.to] = t }
+            if let d = lastTouchAt.removeValue(forKey: m.from) { lastTouchAt[m.to] = d }
+            if searchTinted.remove(m.from) != nil { searchTinted.insert(m.to) }
             edgeTints.removeValue(forKey: m.from)
             if dying[m.to] != nil { revive(m.to) } else if o == .main { clearConflicts(for: m.to) }
             tree.insert(file: m.to, origin: o)
             guard tree.node(m.to)?.isDirectory == false else {
                 // The destination clashes with another checkout's tree: this file is not drawn, so it keeps no effects.
-                starts.removeValue(forKey: m.to); tints.removeValue(forKey: m.to); touchedPaths.remove(m.to)
+                starts.removeValue(forKey: m.to); tints.removeValue(forKey: m.to); touchedPaths.remove(m.to); lastTouchAt.removeValue(forKey: m.to); searchTinted.remove(m.to)
                 continue
             }
             if let t = tints[m.to] { light(pathTo: m.to, with: t, now: now) }
@@ -583,6 +604,7 @@ public struct Simulation: Sendable {
 
         updateEffects(dt: dt)
         updateTreeTransitions(dt: dt)
+        refreshFocus()
 
         if let f = followedAgent, avatars[f] == nil { followedAgent = nil }
         if let f = followedAgent, let t = followTarget(for: f) {

@@ -825,4 +825,21 @@ final class TestClock: @unchecked Sendable {
         snap = await store.snapshot()
         #expect(snap.agents.first { $0.id == AgentID("s1") }?.tokens?.input == 3_000)
     }
+
+    @Test func recentFileActivitySurvivesAnOldBusyTranscriptReadLater() async {
+        let t0 = Date(timeIntervalSince1970: 1_000_000)
+        let now = t0.addingTimeInterval(3 * 3600)
+        let store = SessionStore(folder: PathFolder(root: "/repo", worktrees: []), clock: TestClock(now).read)
+        await store.apply(.sessionAppeared(sessionId: "recent", transcriptURL: URL(fileURLWithPath: "/p/recent.jsonl")))
+        await store.apply(.sessionAppeared(sessionId: "old", transcriptURL: URL(fileURLWithPath: "/p/old.jsonl")))
+        await store.apply(.line(sessionId: "recent", agentId: nil, TranscriptLine(timestamp: now.addingTimeInterval(-60), cwd: "/repo", gitBranch: "main", agentId: nil,
+                                event: .toolUse(id: "r1", name: "Edit", filePath: "/repo/hot.swift", description: nil, question: nil))))
+        for i in 0..<250 {
+            await store.apply(.line(sessionId: "old", agentId: nil, TranscriptLine(timestamp: t0.addingTimeInterval(Double(i)), cwd: "/repo", gitBranch: "main", agentId: nil,
+                                    event: .toolUse(id: "o\(i)", name: "Edit", filePath: "/repo/old\(i).swift", description: nil, question: nil))))
+        }
+        let snap = await store.snapshot()
+        #expect(snap.activeFiles[RepoPath(string: "hot.swift")] == now.addingTimeInterval(-60))
+        #expect(snap.activeFiles.count == 1)
+    }
 }
