@@ -46,15 +46,17 @@ public enum Milestone: Equatable, Sendable {
 public struct CommandEvent: Equatable, Sendable {
     public let seq: UInt64
     public let agent: AgentID
+    public let toolUseId: String
     public let at: Date
     public let commandClass: CommandClass
     public let label: String
     public let command: String
     public var commit: CommitInfo?
+    public var completedAt: Date?
     public let hueIndex: Int
 
-    public init(seq: UInt64, agent: AgentID, at: Date, commandClass: CommandClass, label: String, command: String, commit: CommitInfo? = nil, hueIndex: Int = 0) {
-        self.seq = seq; self.agent = agent; self.at = at; self.commandClass = commandClass; self.label = label
+    public init(seq: UInt64, agent: AgentID, toolUseId: String, at: Date, commandClass: CommandClass, label: String, command: String, commit: CommitInfo? = nil, completedAt: Date? = nil, hueIndex: Int = 0) {
+        self.seq = seq; self.agent = agent; self.toolUseId = toolUseId; self.completedAt = completedAt; self.at = at; self.commandClass = commandClass; self.label = label
         self.command = command; self.commit = commit; self.hueIndex = hueIndex
     }
 

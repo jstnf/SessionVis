@@ -10,13 +10,18 @@ public struct TreeDelta: Equatable, Sendable {
     public var added: [RepoPath]
     public var removed: [RepoPath]
     public var moved: [Move]
+    /// Files whose content changed in place (never also in `added`).
+    public var changed: [RepoPath]
     /// Which checkout the change happened in. Paths are already relative to that checkout's root.
     public var origin: Origin
     /// The full file set the watcher saw for `origin`; the simulation uses it to reconcile touch-inserted phantoms.
     public var snapshot: Set<RepoPath>?
+    /// The watcher's clock when the rescan that produced this delta ran.
+    public var at: Date
 
-    public init(added: [RepoPath] = [], removed: [RepoPath] = [], moved: [Move] = [], origin: Origin = .main, snapshot: Set<RepoPath>? = nil) {
-        self.added = added; self.removed = removed; self.moved = moved; self.origin = origin; self.snapshot = snapshot
+    public init(added: [RepoPath] = [], removed: [RepoPath] = [], moved: [Move] = [], changed: [RepoPath] = [], origin: Origin = .main, snapshot: Set<RepoPath>? = nil, at: Date = .distantPast) {
+        self.added = added; self.removed = removed; self.moved = moved; self.changed = changed
+        self.origin = origin; self.snapshot = snapshot; self.at = at
     }
 
     /// For truncated scans: removals whose path still exists are not real. A move whose source still exists becomes a plain add.
@@ -31,7 +36,7 @@ public struct TreeDelta: Equatable, Sendable {
         return out
     }
 
-    public var isEmpty: Bool { added.isEmpty && removed.isEmpty && moved.isEmpty }
+    public var isEmpty: Bool { added.isEmpty && removed.isEmpty && moved.isEmpty && changed.isEmpty }
 
     public static func compute(old: Set<RepoPath>, new: Set<RepoPath>) -> TreeDelta {
         var added = new.subtracting(old)

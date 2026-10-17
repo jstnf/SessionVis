@@ -116,6 +116,7 @@ public enum TranscriptParser {
                 let filePath: String? = switch name {
                     case "Edit", "Write", "Read": input["file_path"] as? String
                     case "NotebookEdit": input["notebook_path"] as? String
+                    case "Grep", "Glob": input["path"] as? String
                     default: nil
                 }
                 let question = (name == "AskUserQuestion")

@@ -90,6 +90,45 @@ import Testing
         w.stop()
         #expect(await reader.next() == nil)
     }
+
+    @Test func rewrittenFilesAreReportedAsChangedWithATimestamp() async throws {
+        let d = FileManager.default.temporaryDirectory.appendingPathComponent("watch-chg-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: d.appendingPathComponent("Sources"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: d.appendingPathComponent(".build"), withIntermediateDirectories: true)
+        try "a".write(to: d.appendingPathComponent("Sources/A.swift"), atomically: true, encoding: .utf8)
+        let w = RepoWatcher(directory: d.path, initial: FileTreeScanner.scan(directory: d.path))
+        let reader = DeltaReader(w.deltas)
+        try "aa".write(to: d.appendingPathComponent("Sources/A.swift"), atomically: true, encoding: .utf8)
+        try "n".write(to: d.appendingPathComponent("Sources/N.swift"), atomically: true, encoding: .utf8)
+        try "x".write(to: d.appendingPathComponent(".build/x.o"), atomically: true, encoding: .utf8)
+        w.noteChanged([d.path + "/Sources/A.swift", d.path + "/Sources/N.swift", d.path + "/.build/x.o", d.path + "/Sources"])
+        w.rescan()
+        let delta = try #require(await reader.next())
+        #expect(delta.changed == [RepoPath(string: "Sources/A.swift")])          // the new file is in `added` only
+        #expect(delta.added == [RepoPath(string: "Sources/N.swift")])
+        #expect(delta.at > Date.distantPast)
+        // A change with no add/remove/move still emits.
+        try "aaa".write(to: d.appendingPathComponent("Sources/A.swift"), atomically: true, encoding: .utf8)
+        w.noteChanged([d.path + "/Sources/A.swift"])
+        w.rescan()
+        let only = try #require(await reader.next())
+        #expect(only.changed == [RepoPath(string: "Sources/A.swift")] && only.added.isEmpty && only.removed.isEmpty)
+        w.stop()
+    }
+
+    @Test(.timeLimit(.minutes(1))) func fsEventsReportRewrites() async throws {
+        let d = FileManager.default.temporaryDirectory.appendingPathComponent("watch-live-chg-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+        try "x".write(to: d.appendingPathComponent("f.txt"), atomically: true, encoding: .utf8)
+        let w = RepoWatcher(directory: d.path, initial: FileTreeScanner.scan(directory: d.path), latency: 0.2)
+        let reader = DeltaReader(w.deltas)
+        w.start()
+        try await Task.sleep(for: .milliseconds(300))
+        try "xy".write(to: d.appendingPathComponent("f.txt"), atomically: true, encoding: .utf8)
+        let delta = try #require(await reader.next())
+        #expect(delta.changed.contains(RepoPath(string: "f.txt")) || delta.added.contains(RepoPath(string: "f.txt")))
+        w.stop()
+    }
 }
 
 final class DeltaReader: @unchecked Sendable {

@@ -239,7 +239,7 @@ import Testing
         var sim = Simulation(tree: ghostTree())
         sim.apply(snapshot: StoreSnapshot(agents: [F.agent("s1")]), now: F.t0)
         sim.apply(snapshot: StoreSnapshot(agents: [F.agent("s1")], recentTouches: [
-            Touch(seq: 1, agent: AgentID("s1"), path: g, worktree: "wt", kind: .write, at: F.t0)]), now: F.t0)
+            Touch(seq: 1, agent: AgentID("s1"), path: g, worktree: "wt", kind: .write, scope: .file, source: .tool("Edit"), at: F.t0)]), now: F.t0)
         #expect(sim.tints[g] != nil && sim.edgeTints[g] != nil)
         sim.apply(delta: TreeDelta(removed: [g], origin: .worktree("wt"), snapshot: []), now: F.t0)
         #expect(sim.deathAlpha(g) == 1)
@@ -254,7 +254,7 @@ import Testing
         sim.apply(snapshot: StoreSnapshot(agents: [F.agent("s1")]), now: F.t0)
         let p = RepoPath(string: "A/fresh.swift")
         sim.apply(snapshot: StoreSnapshot(agents: [F.agent("s1")], recentTouches: [
-            Touch(seq: 1, agent: AgentID("s1"), path: p, worktree: "wt", kind: .write, at: F.t0)]), now: F.t0)
+            Touch(seq: 1, agent: AgentID("s1"), path: p, worktree: "wt", kind: .write, scope: .file, source: .tool("Edit"), at: F.t0)]), now: F.t0)
         #expect(sim.tree.isGhost(p) && sim.position(of: p) != nil)
         sim.apply(delta: TreeDelta(origin: .main, snapshot: [a, b, c]), now: F.t0)
         #expect(sim.deathAlpha(p) == nil)                                     // main's snapshot says nothing about worktree files
@@ -262,7 +262,7 @@ import Testing
         #expect(sim.deathAlpha(p) == 1)                                       // the worktree's own snapshot does, and it is not on disk
         // A worktree touch on a file that exists in main neither duplicates it nor makes it a ghost.
         sim.apply(snapshot: StoreSnapshot(agents: [F.agent("s1")], recentTouches: [
-            Touch(seq: 2, agent: AgentID("s1"), path: a, worktree: "wt", kind: .read, at: F.t0)]), now: F.t0)
+            Touch(seq: 2, agent: AgentID("s1"), path: a, worktree: "wt", kind: .read, scope: .file, source: .tool("Edit"), at: F.t0)]), now: F.t0)
         #expect(!sim.tree.isGhost(a) && sim.tree.fileCount == 4)
     }
     @Test func worktreeDeltaNeverDisplacesMainOnAFileDirectoryClash() {

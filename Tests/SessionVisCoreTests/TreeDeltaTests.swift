@@ -26,4 +26,9 @@ import Testing
         let d = TreeDelta.compute(old: [p("z"), p("y")], new: [p("b"), p("a")])
         #expect(d.added == [p("a"), p("b")] && d.removed == [p("y"), p("z")])
     }
+
+    @Test func changedPathsMakeADeltaNonEmpty() {
+        #expect(!TreeDelta(changed: [p("a")]).isEmpty)
+        #expect(TreeDelta().isEmpty)
+    }
 }

@@ -336,8 +336,22 @@ final class TestClock: @unchecked Sendable {
         #expect(a?.touchCount == 1)                                                               // its history still counted (I-1)
     }
 
-    func bash(_ command: String, id: String = "b1", description: String? = nil, at: TimeInterval = 0, agent: String? = nil) -> SourceEvent {
-        line(.toolUse(id: id, name: "Bash", filePath: nil, description: description, question: nil, command: command), at: at, agent: agent)
+    func bash(_ command: String, id: String = "b1", description: String? = nil, at: TimeInterval = 0, cwd: String = "/repo", agent: String? = nil) -> SourceEvent {
+        line(.toolUse(id: id, name: "Bash", filePath: nil, description: description, question: nil, command: command), at: at, cwd: cwd, agent: agent)
+    }
+    /// A real directory standing in for the repository, holding `files` (a trailing `/` makes a directory).
+    func tempRepo(_ files: [String]) throws -> String {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("sv-store-\(UUID().uuidString)").path
+        for f in files {
+            let full = root + "/" + f
+            if f.hasSuffix("/") {
+                try FileManager.default.createDirectory(atPath: full, withIntermediateDirectories: true)
+            } else {
+                try FileManager.default.createDirectory(atPath: (full as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+                FileManager.default.createFile(atPath: full, contents: Data())
+            }
+        }
+        return root
     }
 
     @Test func bashCallsBecomeCommandEventsWithLabelsAndClasses() async {
@@ -411,5 +425,243 @@ final class TestClock: @unchecked Sendable {
         #expect(snap.recentCommands.allSatisfy { $0.agent == AgentID("A") })
         #expect(snap.agents.first { $0.id == AgentID("A") }?.lastCommandLabel == "ls \(Constants.recentCommandLimit + 4)")
         #expect(snap.agents.first { $0.id == AgentID("s1") }?.lastCommandLabel == nil)
+    }
+
+    @Test func shellCommandsYieldTouchesWithVerbsAndScopes() async throws {
+        let root = try tempRepo(["Sources/A.swift", "Sources/B.swift", "Tests/"])
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        let store = SessionStore(folder: PathFolder(root: root), clock: TestClock().read)
+        await store.apply(.sessionAppeared(sessionId: "s1", transcriptURL: url))
+        await store.apply(bash("cd \(root) && sed -n 1,40p Sources/A.swift", id: "b1", at: 1, cwd: root))
+        await store.apply(bash("grep -rn needle Sources Tests", id: "b2", at: 2, cwd: root))
+        await store.apply(bash("cat > Sources/New.swift <<'EOF'\ncat Sources/B.swift\nEOF", id: "b3", at: 3, cwd: root))
+        await store.apply(bash("cat /elsewhere/x.txt", id: "b4", at: 4, cwd: root))
+        await store.apply(bash("ls", id: "b5", at: 5, cwd: root))
+        let snap = await store.snapshot()
+        let ts = snap.recentTouches
+        #expect(ts.map(\.path.string) == ["Sources/A.swift", "Sources", "Tests", "Sources/New.swift", ""])
+        #expect(ts[0].kind == .read && ts[0].scope == .file && ts[0].source == .shell("sed"))
+        #expect(ts[1].scope == .directory && ts[1].source == .shell("grep"))
+        #expect(ts[3].kind == .write && ts[3].source == .shell(">"))
+        #expect(ts[4].path.isRoot && ts[4].scope == .directory)
+        #expect(ts.allSatisfy { $0.hueIndex == snap.agents[0].hueIndex && $0.agentTitle == snap.agents[0].title })
+        #expect(snap.agents[0].touchCount == 5)
+        #expect(snap.recentCommands.count == 5)
+    }
+
+    @Test func shellTouchesFoldWorktreePathsAndUseTheRecordCwd() async throws {
+        let root = try tempRepo([".claude/worktrees/wt/Sources/W.swift"])
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        let store = SessionStore(folder: PathFolder(root: root), clock: TestClock().read)
+        await store.apply(.sessionAppeared(sessionId: "s1", transcriptURL: url))
+        await store.apply(line(.toolUse(id: "b1", name: "Bash", filePath: nil, description: nil, question: nil, command: "cat Sources/W.swift"), cwd: root + "/.claude/worktrees/wt"))
+        let ts = await store.snapshot().recentTouches
+        #expect(ts.count == 1 && ts[0].path == RepoPath(string: "Sources/W.swift") && ts[0].worktree == "wt")
+    }
+
+    @Test func toolTouchesCarrySourceAndSearchesTouchDirectories() async throws {
+        let root = try tempRepo(["Sources/"])
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        let store = SessionStore(folder: PathFolder(root: root), clock: TestClock().read)
+        await store.apply(.sessionAppeared(sessionId: "s1", transcriptURL: url))
+        await store.apply(edit(root + "/A.swift", id: "e1", at: 1, cwd: root))
+        await store.apply(line(.toolUse(id: "g1", name: "Grep", filePath: root + "/Sources", description: nil, question: nil), at: 2, cwd: root))
+        await store.apply(line(.toolUse(id: "g2", name: "Glob", filePath: nil, description: nil, question: nil), at: 3, cwd: root))
+        let ts = await store.snapshot().recentTouches
+        #expect(ts[0].source == .tool("Edit") && ts[0].scope == .file)
+        #expect(ts[1].path == RepoPath(string: "Sources") && ts[1].scope == .directory && ts[1].kind == .read && ts[1].source == .tool("Grep"))
+        #expect(ts[2].path.isRoot && ts[2].scope == .directory && ts[2].source == .tool("Glob"))
+    }
+
+    @Test func shellAndSearchReadsNeedTheTargetOnDisk() async throws {
+        let root = try tempRepo(["Sources/A.swift"])
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        let store = SessionStore(folder: PathFolder(root: root), clock: TestClock().read)
+        await store.apply(.sessionAppeared(sessionId: "s1", transcriptURL: url))
+        await store.apply(bash("cat Sources/A.swift Sources/Missing.swift", id: "b1", at: 1, cwd: root))
+        var ts = await store.snapshot().recentTouches
+        #expect(ts.map(\.path.string) == ["Sources/A.swift"] && ts[0].kind == .read)
+        await store.apply(bash("grep -rn x Sources Nope", id: "b2", at: 2, cwd: root))
+        ts = await store.snapshot().recentTouches
+        #expect(ts.count == 2 && ts[1].path == RepoPath(string: "Sources") && ts[1].scope == .directory)
+        await store.apply(bash("echo x > Sources/New.swift", id: "b3", at: 3, cwd: root))
+        ts = await store.snapshot().recentTouches
+        #expect(ts.count == 3 && ts[2].path == RepoPath(string: "Sources/New.swift") && ts[2].kind == .write)
+        await store.apply(line(.toolUse(id: "g1", name: "Grep", filePath: root + "/Gone", description: nil, question: nil), at: 4, cwd: root))
+        await store.apply(line(.toolUse(id: "r1", name: "Read", filePath: root + "/Gone.swift", description: nil, question: nil), at: 5, cwd: root))
+        ts = await store.snapshot().recentTouches
+        #expect(ts.count == 4 && ts[3].source == .tool("Read"))       // file tools are recorded as before
+    }
+
+    func disk(_ paths: [String], at: TimeInterval, origin: Origin = .main) -> SourceEvent {
+        .diskChanges(DiskChange(origin: origin, paths: paths.map(RepoPath.init(string:)), at: t0.addingTimeInterval(at)))
+    }
+    func settle(_ clock: TestClock, _ store: SessionStore, to at: TimeInterval) async -> StoreSnapshot {
+        clock.now = t0.addingTimeInterval(at + Constants.diskAttributionDelay)
+        return await store.snapshot()
+    }
+
+    @Test func diskChangeDuringOneAgentsCommandIsAttributed() async {
+        let clock = TestClock(t0); let store = SessionStore(folder: folder, clock: clock.read)
+        await store.apply(.sessionAppeared(sessionId: "s1", transcriptURL: url))
+        await store.apply(.initialLoadComplete)
+        await store.apply(bash("python3 gen.py", id: "b1", at: 0))
+        await store.apply(disk(["Sources/Gen.swift"], at: 1))
+        var snap = await store.snapshot()                       // not settled yet
+        #expect(snap.recentTouches.isEmpty)
+        snap = await settle(clock, store, to: 1)
+        let t = snap.recentTouches
+        #expect(t.count == 1 && t[0].path == RepoPath(string: "Sources/Gen.swift") && t[0].kind == .write && t[0].source == .disk && t[0].scope == .file)
+        #expect(t[0].agent == AgentID("s1") && t[0].at == t0.addingTimeInterval(1) && snap.agents[0].touchCount == 1)
+        snap = await settle(clock, store, to: 2)                // queue drained: nothing twice
+        #expect(snap.recentTouches.count == 1)
+    }
+
+    @Test func diskChangeIsUnattributedWhenAmbiguousOrNobodyIsRunning() async {
+        let clock = TestClock(t0); let store = SessionStore(folder: folder, clock: clock.read)
+        await store.apply(.sessionAppeared(sessionId: "s1", transcriptURL: url))
+        await store.apply(.initialLoadComplete)
+        await store.apply(.sessionAppeared(sessionId: "s2", transcriptURL: URL(fileURLWithPath: "/p/s2.jsonl")))
+        await store.apply(bash("make", id: "b1", at: 0))
+        await store.apply(.line(sessionId: "s2", agentId: nil, TranscriptLine(timestamp: t0, cwd: "/repo", gitBranch: nil, agentId: nil,
+                               event: .toolUse(id: "b2", name: "Bash", filePath: nil, description: nil, question: nil, command: "make"))))
+        await store.apply(disk(["a.txt"], at: 1))
+        #expect(await settle(clock, store, to: 1).recentTouches.isEmpty)        // two candidates
+        await store.apply(line(.toolResult(toolUseId: "b1", text: "ok"), at: 2))
+        await store.apply(.line(sessionId: "s2", agentId: nil, TranscriptLine(timestamp: t0.addingTimeInterval(2), cwd: "/repo", gitBranch: nil, agentId: nil, event: .toolResult(toolUseId: "b2", text: "ok"))))
+        await store.apply(disk(["b.txt"], at: 10))
+        #expect(await settle(clock, store, to: 10).recentTouches.isEmpty)       // both finished long before
+    }
+
+    @Test func diskChangeEchoOfAToolWriteIsDeduped() async {
+        let clock = TestClock(t0); let store = SessionStore(folder: folder, clock: clock.read)
+        await store.apply(.sessionAppeared(sessionId: "s1", transcriptURL: url))
+        await store.apply(.initialLoadComplete)
+        await store.apply(.sessionAppeared(sessionId: "s2", transcriptURL: URL(fileURLWithPath: "/p/s2.jsonl")))
+        await store.apply(bash("swift build", id: "b1", at: 0))                             // s1 is running a command
+        await store.apply(disk(["Sources/A.swift"], at: 1))                                 // s2's edit lands on disk first...
+        await store.apply(.line(sessionId: "s2", agentId: nil, TranscriptLine(timestamp: t0.addingTimeInterval(0.8), cwd: "/repo", gitBranch: nil, agentId: nil,
+                               event: .toolUse(id: "e2", name: "Edit", filePath: "/repo/Sources/A.swift", description: nil, question: nil))))   // ...its line arrives later
+        let snap = await settle(clock, store, to: 1)
+        #expect(snap.recentTouches.count == 1 && snap.recentTouches[0].source == .tool("Edit"))   // no disk touch for s1
+    }
+
+    @Test func completedCommandsStopBeingCandidatesAfterTheSlack() async {
+        let clock = TestClock(t0); let store = SessionStore(folder: folder, clock: clock.read)
+        await store.apply(.sessionAppeared(sessionId: "s1", transcriptURL: url))
+        await store.apply(.initialLoadComplete)
+        await store.apply(bash("swift build", id: "b1", at: 0))
+        await store.apply(line(.toolResult(toolUseId: "b1", text: "ok"), at: 5))
+        #expect(await store.snapshot().recentCommands[0].completedAt == t0.addingTimeInterval(5))
+        await store.apply(disk(["x.txt"], at: 6))                                           // within slack of completion
+        #expect(await settle(clock, store, to: 6).recentTouches.count == 1)
+        await store.apply(disk(["y.txt"], at: 9))                                           // past the slack
+        #expect(await settle(clock, store, to: 9).recentTouches.count == 1)
+    }
+
+    @Test func diskChangesInAWorktreeCarryItsName() async {
+        let clock = TestClock(t0); let store = SessionStore(folder: folder, clock: clock.read)
+        await store.apply(.sessionAppeared(sessionId: "s1", transcriptURL: url))
+        await store.apply(.initialLoadComplete)
+        await store.apply(bash("make", id: "b1", at: 0))
+        await store.apply(disk(["Sources/G.swift"], at: 1, origin: .worktree("wt")))
+        let t = await settle(clock, store, to: 1).recentTouches
+        #expect(t.count == 1 && t[0].worktree == "wt")
+    }
+
+    func s2(_ event: TranscriptEvent, at: TimeInterval) -> SourceEvent {
+        .line(sessionId: "s2", agentId: nil, TranscriptLine(timestamp: t0.addingTimeInterval(at), cwd: "/repo", gitBranch: nil, agentId: nil, event: event))
+    }
+    func loadedStore(_ clock: TestClock, sessions: [String] = ["s1"]) async -> SessionStore {
+        let store = SessionStore(folder: folder, clock: clock.read)
+        for sid in sessions { await store.apply(.sessionAppeared(sessionId: sid, transcriptURL: URL(fileURLWithPath: "/p/\(sid).jsonl"))) }
+        await store.apply(.initialLoadComplete)
+        return store
+    }
+
+    @Test func fileToolWriteIsEchoedUntilItsResultSettles() async {
+        let clock = TestClock(t0); let store = await loadedStore(clock, sessions: ["s1", "s2"])
+        await store.apply(bash("swift build", id: "b1", at: 0))                                   // s1 runs a command throughout
+        await store.apply(s2(.toolUse(id: "e2", name: "Edit", filePath: "/repo/Sources/A.swift", description: nil, question: nil), at: 0))
+        await store.apply(disk(["Sources/A.swift"], at: 5))                                       // lands while the Edit waits
+        var t = await settle(clock, store, to: 5).recentTouches
+        #expect(t.count == 1 && t[0].source == .tool("Edit"))
+        await store.apply(s2(.toolResult(toolUseId: "e2", text: "ok"), at: 6))
+        await store.apply(disk(["Sources/A.swift"], at: 7))                                       // within the window of the result
+        t = await settle(clock, store, to: 7).recentTouches
+        #expect(t.count == 1)
+        await store.apply(disk(["Sources/A.swift"], at: 12))                                      // long after: s1's own change
+        t = await settle(clock, store, to: 12).recentTouches
+        #expect(t.count == 2 && t[1].source == .disk && t[1].agent == AgentID("s1"))
+    }
+
+    @Test func aCommandPushedOutOfTheRecentListStillCounts() async {
+        let clock = TestClock(t0); let store = await loadedStore(clock, sessions: ["s1", "s2"])
+        await store.apply(bash("swift test", id: "long", at: 0))                                  // s1's long command
+        for i in 0...Constants.recentCommandLimit {
+            await store.apply(s2(.toolUse(id: "x\(i)", name: "Bash", filePath: nil, description: nil, question: nil, command: "ls"), at: 0.5))
+            await store.apply(s2(.toolResult(toolUseId: "x\(i)", text: "ok"), at: 1))
+        }
+        await store.apply(s2(.toolUse(id: "y", name: "Bash", filePath: nil, description: nil, question: nil, command: "make"), at: 9))
+        let snap = await settle(clock, store, to: 9)
+        #expect(!snap.recentCommands.contains { $0.agent == AgentID("s1") })
+        await store.apply(disk(["Sources/Gen.swift"], at: 10))
+        #expect(await settle(clock, store, to: 10).recentTouches.isEmpty)                         // both s1 and s2 are running
+    }
+
+    @Test func aCommandStopsCountingWhenItsAgentsTurnOrLifeEnds() async {
+        let clock = TestClock(t0); let store = await loadedStore(clock)
+        await store.apply(.subagentAppeared(sessionId: "s1", agentId: "A", meta: SubagentMeta(description: "A", toolUseId: "toolu_A")))
+        await store.apply(.subagentAppeared(sessionId: "s1", agentId: "B", meta: SubagentMeta(description: "B", toolUseId: "toolu_B")))
+        await store.apply(bash("make", id: "b1", at: 0))                                           // s1 keeps running
+        await store.apply(bash("swift test", id: "a1", at: 0, agent: "A"))
+        await store.apply(bash("swift test", id: "bb1", at: 0, agent: "B"))
+        await store.apply(line(.turnEnded, at: 1, agent: "A"))                                      // no result ever came
+        await store.apply(line(.toolResult(toolUseId: "toolu_B"), at: 1))                           // parent's result ends B...
+        await store.apply(line(.assistantText(text: "more", endOfTurn: false), at: 2, agent: "B")) // ...and B's next line revives it
+        var snap = await store.snapshot()
+        #expect(snap.agents.first { $0.id == AgentID("A") }?.status != .ended)
+        #expect(snap.agents.first { $0.id == AgentID("B") }?.status != .ended)
+        await store.apply(disk(["x.txt"], at: 6))
+        snap = await settle(clock, store, to: 6)
+        #expect(snap.recentTouches.count == 1 && snap.recentTouches[0].agent == AgentID("s1"))
+    }
+
+    @Test func endedAgentGetsNoCredit() async {
+        let clock = TestClock(t0); let store = await loadedStore(clock)
+        await store.apply(.subagentAppeared(sessionId: "s1", agentId: "A", meta: SubagentMeta(description: "A", toolUseId: "toolu_A")))
+        await store.apply(bash("python3 gen.py", id: "a1", at: 0, agent: "A"))
+        await store.apply(line(.toolResult(toolUseId: "toolu_A"), at: 5))                           // A ends with its command
+        await store.apply(disk(["Sources/Gen.swift"], at: 5.5))
+        #expect(await settle(clock, store, to: 5.5).recentTouches.isEmpty)
+    }
+
+    @Test func diskChangesBeforeTheInitialLoadAreDropped() async {
+        let clock = TestClock(t0); let store = SessionStore(folder: folder, clock: clock.read)
+        await store.apply(.sessionAppeared(sessionId: "s1", transcriptURL: url))
+        await store.apply(bash("make", id: "b1", at: 0))
+        await store.apply(disk(["a.txt"], at: 1))
+        await store.apply(.initialLoadComplete)
+        #expect(await settle(clock, store, to: 1).recentTouches.isEmpty)
+        await store.apply(disk(["b.txt"], at: 2))
+        #expect(await settle(clock, store, to: 2).recentTouches.map(\.path.string) == ["b.txt"])
+    }
+
+    @Test func storeWithoutDiskEventsRecordsNoDiskTouches() async {
+        let clock = TestClock(t0); let store = SessionStore(folder: folder, clock: clock.read)   // as in replay: no watcher
+        await store.apply(.sessionAppeared(sessionId: "s1", transcriptURL: url))
+        await store.apply(bash("python3 gen.py > out.txt", id: "b1", at: 0))
+        let snap = await settle(clock, store, to: 5)
+        #expect(!snap.recentTouches.contains { $0.source == .disk })
+        #expect(snap.recentTouches.map(\.path.string) == ["out.txt"])
+    }
+
+    @Test func bulkDiskChangesAreNotCredited() async {
+        let clock = TestClock(t0); let store = await loadedStore(clock)
+        await store.apply(bash("git checkout other", id: "b1", at: 0))
+        await store.apply(disk((0...Constants.diskAttributionPathLimit).map { "f\($0).txt" }, at: 1))
+        #expect(await settle(clock, store, to: 1).recentTouches.isEmpty)
+        await store.apply(disk((1...Constants.diskAttributionPathLimit).map { "g\($0).txt" }, at: 2))
+        #expect(await settle(clock, store, to: 2).recentTouches.count == Constants.diskAttributionPathLimit)
     }
 }

@@ -11,6 +11,14 @@ public struct SubagentMeta: Equatable, Sendable, Codable {
     }
 }
 
+/// Files the watcher saw change (added or rewritten) in one checkout, with the watcher's clock.
+public struct DiskChange: Equatable, Sendable {
+    public let origin: Origin
+    public let paths: [RepoPath]
+    public let at: Date
+    public init(origin: Origin, paths: [RepoPath], at: Date) { self.origin = origin; self.paths = paths; self.at = at }
+}
+
 /// What both the live source and the replay source emit; the store consumes it.
 public enum SourceEvent: Equatable, Sendable {
     case sessionAppeared(sessionId: String, transcriptURL: URL)
@@ -18,6 +26,7 @@ public enum SourceEvent: Equatable, Sendable {
     case line(sessionId: String, agentId: String?, TranscriptLine)
     case hook(HookEvent)
     case diagnostics(skippedLines: Int)
+    case diskChanges(DiskChange)
     /// The source has emitted everything already on disk at launch (live: first rescan + tick; replay: after `sessionAppeared`).
     case initialLoadComplete
 }

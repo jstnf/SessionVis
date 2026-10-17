@@ -35,8 +35,27 @@ public enum TouchKind: Equatable, Sendable {
     public static func forTool(_ name: String) -> TouchKind? {
         switch name {
         case "Edit", "Write", "NotebookEdit": .write
-        case "Read": .read
+        case "Read", "Grep", "Glob": .read
         default: nil
+        }
+    }
+    /// Tools whose path is a directory to search rather than a file.
+    public static func isSearchTool(_ name: String) -> Bool { name == "Grep" || name == "Glob" }
+}
+
+public enum TouchScope: Equatable, Sendable { case file, directory }
+
+/// How a touch was learned: a file tool call, a shell command's operand, or a filesystem change credited to the agent.
+public enum TouchSource: Equatable, Sendable {
+    case tool(String)
+    case shell(String)
+    case disk
+
+    public var label: String {
+        switch self {
+        case .tool(let name): "via \(name)"
+        case .shell(let verb): "via \(verb)"
+        case .disk: "on disk"
         }
     }
 }
@@ -47,12 +66,14 @@ public struct Touch: Equatable, Sendable {
     public let path: RepoPath
     public let worktree: String?
     public let kind: TouchKind
+    public let scope: TouchScope
+    public let source: TouchSource
     public let at: Date
     public let hueIndex: Int
     public let agentTitle: String?
-    public init(seq: UInt64, agent: AgentID, path: RepoPath, worktree: String?, kind: TouchKind, at: Date, hueIndex: Int = 0, agentTitle: String? = nil) {
-        self.seq = seq; self.agent = agent; self.path = path; self.worktree = worktree; self.kind = kind; self.at = at
-        self.hueIndex = hueIndex; self.agentTitle = agentTitle
+    public init(seq: UInt64, agent: AgentID, path: RepoPath, worktree: String?, kind: TouchKind, scope: TouchScope, source: TouchSource, at: Date, hueIndex: Int = 0, agentTitle: String? = nil) {
+        self.seq = seq; self.agent = agent; self.path = path; self.worktree = worktree; self.kind = kind
+        self.scope = scope; self.source = source; self.at = at; self.hueIndex = hueIndex; self.agentTitle = agentTitle
     }
 }
 

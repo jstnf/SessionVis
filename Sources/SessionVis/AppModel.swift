@@ -105,6 +105,8 @@ final class AppModel {
         let tree = await loadTree(dir)
         guard generation == openGeneration else { return }
         applyTree(tree, root: dir)
+        let folder = PathFolder(root: dir)
+        let store = SessionStore(folder: folder)
         let watcher = RepoWatcher(directory: dir, initial: tree)
         self.watcher = watcher
         watcher.start()
@@ -113,10 +115,10 @@ final class AppModel {
                 guard let self, self.openGeneration == generation else { return }
                 self.box.apply(delta: delta, now: Date())
                 self.treeFileCount = self.box.simulation.visibleFileCount
+                let paths = delta.added + delta.changed
+                if !paths.isEmpty { await store.apply(.diskChanges(DiskChange(origin: delta.origin, paths: paths, at: delta.at))) }
             }
         }
-        let folder = PathFolder(root: dir)
-        let store = SessionStore(folder: folder)
         let live = LiveSource(folder: folder, projectsRoot: projectsRoot, spoolDirectory: HookSnippet.defaultSpoolDirectory)
         self.store = store
         self.live = live
@@ -248,13 +250,18 @@ final class AppModel {
         case .node(let path):
             guard let node = sim.tree.node(path) else { return [] }
             if node.isDirectory {
-                return [path.isRoot ? "/" : path.string, "\(node.leafCount) files"]
+                var lines = [path.isRoot ? "/" : path.string, "\(node.leafCount) files"]
+                if let t = sim.tints[path] {
+                    let title = snapshot.agents.first { $0.id == t.toucher }?.title ?? t.toucherTitle ?? t.toucher.raw
+                    lines.append("read by \(title) · \(Int(Date().timeIntervalSince(t.touchedAt)))s ago" + (t.source.map { " · \($0.label)" } ?? ""))
+                }
+                return lines
             }
             var lines = [path.string]
             if let t = sim.tints[path] {
                 let title = snapshot.agents.first { $0.id == t.toucher }?.title ?? t.toucherTitle ?? t.toucher.raw
                 let ago = Int(Date().timeIntervalSince(t.touchedAt))
-                lines.append("last touched by \(title) · \(ago)s ago")
+                lines.append("last touched by \(title) · \(ago)s ago" + (t.source.map { " · \($0.label)" } ?? ""))
             }
             let origins = node.origins.compactMap { if case .worktree(let n) = $0 { return n } else { return nil } }.sorted()
             if sim.tree.isGhost(path), !origins.isEmpty {

@@ -233,4 +233,33 @@ import Testing
         #expect(sim.pulses.map(\.milestone) == [.merge, .rebase])
         #expect(sim.ripples.isEmpty && sim.tints[a]?.strength == Constants.tintWrite && sim.avatars[s1]?.badge == nil)
     }
+
+    @Test func directoryTouchLightsTheDirectoryWithoutInsertingAnything() {
+        var sim = primed()
+        let dir = RepoPath(string: "A")
+        sim.apply(snapshot: StoreSnapshot(agents: [F.agent("s1")], recentTouches: [F.touch(1, "s1", "A", kind: .read, scope: .directory, source: .shell("grep"))]), now: F.t0)
+        #expect(sim.tree.fileCount == 3 && sim.tree.node(dir)?.isDirectory == true)
+        #expect(sim.tints[dir]?.toucher == s1 && sim.tints[dir]?.source == .shell("grep"))
+        #expect(sim.edgeTints[dir] != nil && sim.edgeTints[a] == nil)                 // lit down to the directory, not into it
+        #expect(sim.beams.count == 1 && sim.beams[0].to == dir)
+        #expect(sim.heatValue(dir) == Constants.heatRead)
+        #expect(sim.avatars[s1]?.lastTouchPath == dir)
+    }
+
+    @Test func directoryTouchFallsBackToTheNearestExistingDirectory() {
+        var sim = primed()
+        sim.apply(snapshot: StoreSnapshot(agents: [F.agent("s1")], recentTouches: [F.touch(1, "s1", "A/missing/deeper", kind: .read, scope: .directory, source: .shell("ls"))]), now: F.t0)
+        #expect(sim.tree.node(RepoPath(string: "A/missing")) == nil)
+        #expect(sim.tints[RepoPath(string: "A")] != nil && sim.beams[0].to == RepoPath(string: "A"))
+        sim.apply(snapshot: StoreSnapshot(agents: [F.agent("s1")], recentTouches: [F.touch(2, "s1", "A/a.swift", kind: .read, scope: .directory, source: .shell("grep"))]), now: F.t0)
+        #expect(sim.tints[a] != nil && sim.beams.last?.to == a)                      // an existing file is touched as a file
+        sim.apply(snapshot: StoreSnapshot(agents: [F.agent("s1")], recentTouches: [F.touch(3, "s1", "", kind: .read, scope: .directory, source: .shell("ls"))]), now: F.t0)
+        #expect(sim.tints[RepoPath([])] != nil && sim.edgeTints.isEmpty == false)   // root tinted; no edge above the root
+    }
+
+    @Test func fileTouchRecordsItsSource() {
+        var sim = primed()
+        sim.apply(snapshot: StoreSnapshot(agents: [F.agent("s1")], recentTouches: [F.touch(1, "s1", "A/a.swift", source: .disk)]), now: F.t0)
+        #expect(sim.tints[a]?.source == .disk)
+    }
 }

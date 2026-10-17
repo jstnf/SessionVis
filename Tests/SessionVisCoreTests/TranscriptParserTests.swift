@@ -66,6 +66,8 @@ import Testing
         #expect(try events(use("Edit", #"{"file_path":"/repo/A.swift","old_string":"a","new_string":"b"}"#)) == [.toolUse(id: "toolu_9", name: "Edit", filePath: "/repo/A.swift", description: nil, question: nil)])
         #expect(try events(use("Read", #"{"file_path":"/repo/B.swift"}"#)) == [.toolUse(id: "toolu_9", name: "Read", filePath: "/repo/B.swift", description: nil, question: nil)])
         #expect(try events(use("NotebookEdit", #"{"notebook_path":"/repo/n.ipynb","new_source":""}"#)) == [.toolUse(id: "toolu_9", name: "NotebookEdit", filePath: "/repo/n.ipynb", description: nil, question: nil)])
+        #expect(try events(use("Grep", #"{"pattern":"foo","path":"/repo/Sources"}"#)) == [.toolUse(id: "toolu_9", name: "Grep", filePath: "/repo/Sources", description: nil, question: nil)])
+        #expect(try events(use("Glob", #"{"pattern":"**/*.swift"}"#)) == [.toolUse(id: "toolu_9", name: "Glob", filePath: nil, description: nil, question: nil)])
         #expect(try events(use("Bash", #"{"command":"ls","description":"List files"}"#)) == [.toolUse(id: "toolu_9", name: "Bash", filePath: nil, description: "List files", question: nil, command: "ls")])
         #expect(try events(use("Agent", #"{"description":"Research hitches","prompt":"..."}"#)) == [.toolUse(id: "toolu_9", name: "Agent", filePath: nil, description: "Research hitches", question: nil)])
         #expect(try events(use("AskUserQuestion", #"{"questions":[{"question":"Which layout?","header":"Layout","options":[]}]}"#)) == [.toolUse(id: "toolu_9", name: "AskUserQuestion", filePath: nil, description: nil, question: "Which layout?")])

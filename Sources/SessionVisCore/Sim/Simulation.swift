@@ -59,6 +59,7 @@ public struct FileTint: Equatable, Sendable {
     public var toucher: AgentID
     public var toucherTitle: String?
     public var touchedAt: Date
+    public var source: TouchSource? = nil
 }
 
 public struct Beam: Equatable, Sendable {
@@ -227,7 +228,7 @@ public struct Simulation: Sendable {
         let depth = edgeTints.filter { $0.value.toucher == agent }.keys.map(\.depth).max() ?? 1
         ripples.append(Ripple(agent: agent, hueIndex: hue, maxDepth: max(1, depth), age: 0))
         for (path, t) in tints where t.toucher == agent {
-            tints[path] = FileTint(hueIndex: t.hueIndex, strength: Constants.committedTintFloor, toucher: agent, toucherTitle: t.toucherTitle, touchedAt: now)
+            tints[path] = FileTint(hueIndex: t.hueIndex, strength: Constants.committedTintFloor, toucher: agent, toucherTitle: t.toucherTitle, touchedAt: now, source: t.source)
             heat[path] = FileHeat(value: Constants.heatWrite, hueIndex: t.hueIndex)
         }
     }
@@ -246,27 +247,44 @@ public struct Simulation: Sendable {
         let priming = !primed
         primed = true
         for t in touches {
-            ensureLaidOut(t.path, origin: t.worktree.map(Origin.worktree) ?? .main)
-            touchedPaths.insert(t.path)
-            recentTouches[t.agent, default: []].append(TouchRef(path: t.path, at: t.at))
-            avatars[t.agent]?.lastTouchPath = t.path
+            let target: RepoPath
+            switch t.scope {
+            case .file:
+                ensureLaidOut(t.path, origin: t.worktree.map(Origin.worktree) ?? .main)
+                target = t.path
+            case .directory:
+                target = self.target(for: t.path)
+            }
+            touchedPaths.insert(target)
+            recentTouches[t.agent, default: []].append(TouchRef(path: target, at: t.at))
+            avatars[t.agent]?.lastTouchPath = target
             lastTouchSeq = max(lastTouchSeq, t.seq)
             let hue = avatars[t.agent]?.hueIndex ?? t.hueIndex
-            applyTint(t, hue: hue, now: now)
+            applyTint(t, at: target, hue: hue, now: now)
             if priming {
-                if now.timeIntervalSince(t.at) <= Constants.touchCentroidWindow { applyHeat(t, hue: hue) }
+                if now.timeIntervalSince(t.at) <= Constants.touchCentroidWindow { applyHeat(t, at: target, hue: hue) }
             } else {
-                fire(t, hue: hue)
+                fire(t, at: target, hue: hue)
             }
         }
     }
 
+    /// A directory touch lands on the path itself when it exists (file or directory), else on the nearest existing ancestor directory.
+    func target(for path: RepoPath) -> RepoPath {
+        var p = path
+        while true {
+            if let n = tree.node(p), p == path || n.isDirectory { return p }
+            guard let up = p.parent else { return RepoPath([]) }
+            p = up
+        }
+    }
+
     /// Tints the file and lights every edge above it, down from the root.
-    private mutating func applyTint(_ t: Touch, hue: Int, now: Date) {
+    private mutating func applyTint(_ t: Touch, at path: RepoPath, hue: Int, now: Date) {
         let fresh = FileTint(hueIndex: hue, strength: t.kind == .write ? Constants.tintWrite : Constants.tintRead,
-                             toucher: t.agent, toucherTitle: avatars[t.agent]?.title ?? t.agentTitle, touchedAt: t.at)
-        Self.merge(fresh, into: &tints, at: t.path, now: now)
-        light(pathTo: t.path, with: fresh, now: now)
+                             toucher: t.agent, toucherTitle: avatars[t.agent]?.title ?? t.agentTitle, touchedAt: t.at, source: t.source)
+        Self.merge(fresh, into: &tints, at: path, now: now)
+        light(pathTo: path, with: fresh, now: now)
     }
 
     /// Lights every edge from the root down to `path` with `tint`, merging into whatever each edge already has.
@@ -307,19 +325,19 @@ public struct Simulation: Sendable {
 
     public func tintStrength(_ path: RepoPath) -> CGFloat { tint(path)?.strength ?? 0 }
 
-    private mutating func applyHeat(_ t: Touch, hue: Int) {
+    private mutating func applyHeat(_ t: Touch, at path: RepoPath, hue: Int) {
         let amount = t.kind == .write ? Constants.heatWrite : Constants.heatRead
-        var h = heat[t.path] ?? FileHeat(value: 0, hueIndex: hue)
+        var h = heat[path] ?? FileHeat(value: 0, hueIndex: hue)
         h.value = max(h.value, amount)
         h.hueIndex = hue
-        heat[t.path] = h
+        heat[path] = h
     }
 
-    private mutating func fire(_ t: Touch, hue: Int) {
-        beams.append(Beam(id: nextBeamId, from: t.agent, to: t.path, hueIndex: hue, kind: t.kind, age: 0))
+    private mutating func fire(_ t: Touch, at path: RepoPath, hue: Int) {
+        beams.append(Beam(id: nextBeamId, from: t.agent, to: path, hueIndex: hue, kind: t.kind, age: 0))
         nextBeamId += 1
-        applyHeat(t, hue: hue)
-        guard t.kind == .write, let origin = layout.position(t.path) else { return }
+        applyHeat(t, at: path, hue: hue)
+        guard t.kind == .write, let origin = layout.position(path) else { return }
         let h = Geometry.stableHash("touch-\(t.seq)")
         for i in 0..<Constants.particlesPerWrite {
             let angle = Geometry.unitFraction(fromHash: h, salt: UInt64(i)) * 2 * .pi

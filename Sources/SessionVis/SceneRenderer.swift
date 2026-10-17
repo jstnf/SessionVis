@@ -97,7 +97,12 @@ enum SceneRenderer {
                 glow(&ctx, at: p, radius: r + 4 + 6 * h.value, color: Palette.hue(h.hueIndex), centerAlpha: 0.35 + 0.6 * h.value)
             }
             let rect = CGRect(x: p.x - r, y: p.y - r, width: 2 * r, height: 2 * r)
-            if node.isDirectory { bright.addEllipse(in: rect); continue }
+            if node.isDirectory {
+                if let t = sim.tint(node.path), case let level = Int((t.strength * CGFloat(tintLevels)).rounded()), level > 0 {
+                    tinted[TintKey(hue: t.hueIndex, level: level), default: Path()].addEllipse(in: rect)
+                } else { bright.addEllipse(in: rect) }
+                continue
+            }
             let ringRect = CGRect(x: p.x - Constants.ghostRingRadius, y: p.y - Constants.ghostRingRadius,
                                   width: 2 * Constants.ghostRingRadius, height: 2 * Constants.ghostRingRadius)
             if node.isGhost {

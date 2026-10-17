@@ -52,4 +52,14 @@ public enum Constants {
     public static let committedTintFloor: CGFloat = 0.35
     /// A push lifts the commit badge off the orb over this long.
     public static let badgeLiftDuration: TimeInterval = 0.9
+    /// Shell commands yield at most this many touches each.
+    public static let shellOperandLimit = 8
+    /// A filesystem change is credited to the one agent whose command was running within this slack...
+    public static let diskAttributionSlack: TimeInterval = 2
+    /// ...after waiting this long for the transcript lines around it to arrive...
+    public static let diskAttributionDelay: TimeInterval = 1.5
+    /// ...unless any touch on the same path happened within this window.
+    public static let touchDedupeWindow: TimeInterval = 3
+    /// A disk change naming more paths than this is a bulk operation (checkout, worktree add, formatter) and is not credited.
+    public static let diskAttributionPathLimit = 25
 }
